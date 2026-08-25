@@ -1108,28 +1108,19 @@ struct Grouped1D1DMatmulKernel[
 
     # 1D data TileTensor types (offsets, expert IDs, scales)
     comptime OffsetsTile = TileTensor[
-        DType.uint32,
-        GMEMLayout1D,
-        MutAnyOrigin,
-        Storage=Self.offsets_storage,
+        .uint32, GMEMLayout1D, MutAnyOrigin, Storage=Self.offsets_storage
     ]
     comptime AScaleOffsetsTile = TileTensor[
-        DType.uint32,
+        .uint32,
         GMEMLayout1D,
         MutAnyOrigin,
         Storage=Self.a_scale_offsets_storage,
     ]
     comptime ExpertIdsTile = TileTensor[
-        DType.int32,
-        GMEMLayout1D,
-        MutAnyOrigin,
-        Storage=Self.expert_ids_storage,
+        .int32, GMEMLayout1D, MutAnyOrigin, Storage=Self.expert_ids_storage
     ]
     comptime ExpertScalesTile = TileTensor[
-        DType.float32,
-        GMEMLayout1D,
-        MutAnyOrigin,
-        Storage=Self.expert_scales_storage,
+        .float32, GMEMLayout1D, MutAnyOrigin, Storage=Self.expert_scales_storage
     ]
 
     # C device tensor type (for bounds-checked stores)
@@ -1563,8 +1554,8 @@ struct Grouped1D1DMatmulKernel[
 
         # ===== Shared Memory Setup =====
         ref smem = external_memory[
-            Scalar[DType.uint8],
-            address_space=AddressSpace.SHARED,
+            UInt8,
+            address_space=.SHARED,
             alignment=128,
         ]().bitcast[Self.SmemType]()[]
 
@@ -2321,15 +2312,11 @@ struct Grouped1D1DMatmulKernel[
                                         ](
                                             (
                                                 sfb_global_ptr + global_offset
-                                            ).address_space_cast[
-                                                AddressSpace.GLOBAL
-                                            ](),
+                                            ).address_space_cast[.GLOBAL](),
                                             (
                                                 sfb_smem_tile._storage
                                                 + smem_offset
-                                            ).address_space_cast[
-                                                AddressSpace.SHARED
-                                            ](),
+                                            ).address_space_cast[.SHARED](),
                                             src_size=Int32(
                                                 copy_size
                                             ) if is_valid else Int32(0),
@@ -2393,13 +2380,13 @@ struct Grouped1D1DMatmulKernel[
                                             Self.sf_tma_dtype,
                                             type_of(atom_dst).LayoutType,
                                             MutAnyOrigin,
-                                            address_space=AddressSpace.SHARED,
+                                            address_space=.SHARED,
                                         ](
                                             rebind[
                                                 UnsafePointer[
                                                     Scalar[Self.sf_tma_dtype],
                                                     MutAnyOrigin,
-                                                    address_space=AddressSpace.SHARED,
+                                                    address_space=.SHARED,
                                                 ]
                                             ](atom_dst._storage),
                                             atom_dst.layout,
@@ -2628,7 +2615,7 @@ struct Grouped1D1DMatmulKernel[
             # batched-stores-then-one-wait shape as
             # TmemFragments.store() + wait_store().
             var _sfb_st_vals = Array[
-                Array[Scalar[DType.uint32], 1],
+                Array[UInt32, 1],
                 Self.config.num_sf_k_tiles,
             ](uninitialized=True)
 
@@ -2667,9 +2654,7 @@ struct Grouped1D1DMatmulKernel[
                 # warp-collective store.
                 syncwarp()
 
-                _sfb_st_vals[sf_idx][0] = bitcast[DType.uint32, 1](sfb_scales)[
-                    0
-                ]
+                _sfb_st_vals[sf_idx][0] = bitcast[.uint32, 1](sfb_scales)[0]
                 tcgen05_st[
                     datapaths=32,
                     bits=32,
@@ -2701,7 +2686,7 @@ struct Grouped1D1DMatmulKernel[
         m_coord: UInt32,
         n_coord: UInt32,
         expert_id: Int32,
-        a_scale_offset: Scalar[DType.uint32],
+        a_scale_offset: UInt32,
         m_start: UInt32,
     ) -> Tuple[Int, Int]:
         """Return (sfa_m_coord, sfb_n_coord), swapped when AB_swapped."""
@@ -2929,13 +2914,13 @@ struct Grouped1D1DMatmulKernel[
                         Self.sf_tma_dtype,
                         type_of(sfa_tt).LayoutType,
                         MutAnyOrigin,
-                        address_space=AddressSpace.SHARED,
+                        address_space=.SHARED,
                     ](
                         rebind[
                             UnsafePointer[
                                 Scalar[Self.sf_tma_dtype],
                                 MutAnyOrigin,
-                                address_space=AddressSpace.SHARED,
+                                address_space=.SHARED,
                             ]
                         ](sfa_tt._storage),
                         sfa_tt.layout,
@@ -2961,13 +2946,13 @@ struct Grouped1D1DMatmulKernel[
                             Self.sf_tma_dtype,
                             type_of(sfb_tt).LayoutType,
                             MutAnyOrigin,
-                            address_space=AddressSpace.SHARED,
+                            address_space=.SHARED,
                         ](
                             rebind[
                                 UnsafePointer[
                                     Scalar[Self.sf_tma_dtype],
                                     MutAnyOrigin,
-                                    address_space=AddressSpace.SHARED,
+                                    address_space=.SHARED,
                                 ]
                             ](sfb_tt._storage),
                             sfb_tt.layout,
@@ -3325,7 +3310,7 @@ struct Grouped1D1DMatmulKernel[
                             src_u[_j] = upper_ip[r0 * 4 + _off + _j]
                         var dst_u = (
                             (src_u * scale)
-                            .cast[DType.bfloat16]()
+                            .cast[.bfloat16]()
                             .cast[Self.accum_type]()
                         )
                         comptime for _j in range(SIMD_CAST_W):
@@ -3337,7 +3322,7 @@ struct Grouped1D1DMatmulKernel[
                                 src_l[_j] = lower_ip[r0 * 4 + _off + _j]
                             var dst_l = (
                                 (src_l * scale)
-                                .cast[DType.bfloat16]()
+                                .cast[.bfloat16]()
                                 .cast[Self.accum_type]()
                             )
                             comptime for _j in range(SIMD_CAST_W):
@@ -3516,12 +3501,10 @@ struct Grouped1D1DMatmulKernel[
                         var output_scale = Float32(0.0)
                         if block_max != Float32(0.0):
                             comptime if is_mxfp8:
-                                output_scale = recip(
-                                    sf_byte.cast[DType.float32]()
-                                )
+                                output_scale = recip(sf_byte.cast[.float32]())
                             else:
                                 output_scale = tensor_sf * recip(
-                                    sf_byte.cast[DType.float32]()
+                                    sf_byte.cast[.float32]()
                                 )
 
                         var p_scaled = pack16 * output_scale
@@ -3542,7 +3525,7 @@ struct Grouped1D1DMatmulKernel[
                                 Int(n_abs) // 2 + Int(warp_row_offset) // 2
                             )
                             if lane_row == UInt32(0) and token_g < m_end:
-                                var packed_u32 = bitcast[DType.uint32, 4](
+                                var packed_u32 = bitcast[.uint32, 4](
                                     packed16_ip
                                 )
                                 swiglu_out.store_packed_word(
@@ -3661,7 +3644,7 @@ struct Grouped1D1DMatmulKernel[
             smem_idx_b: UInt32,
             pair_fp32: SIMD[Self.accum_type, 2],
         ):
-            var pair_bf = pair_fp32.cast[DType.bfloat16]()
+            var pair_bf = pair_fp32.cast[.bfloat16]()
             smem_bf16_ptr.store(Int(SWIZZLE_BF(smem_idx_a)), pair_bf[0])
             smem_bf16_ptr.store(Int(SWIZZLE_BF(smem_idx_b)), pair_bf[1])
 
@@ -3798,14 +3781,14 @@ struct Grouped1D1DMatmulKernel[
                 comptime BF16_LOAD_W = 8
                 comptime n_loads = (2 * src_width) // BF16_LOAD_W
                 var smem_base = UInt32(token_idx) * UInt32(BM) + UInt32(k_raw)
-                var pair_bf = SIMD[DType.bfloat16, 2 * src_width]()
+                var pair_bf = SIMD[.bfloat16, 2 * src_width]()
                 comptime for li in range(n_loads):
                     var chunk = smem_bf16_ptr.load[width=BF16_LOAD_W](
                         Int(SWIZZLE_BF(smem_base + UInt32(li * BF16_LOAD_W)))
                     )
                     comptime for ci in range(BF16_LOAD_W):
                         pair_bf[li * BF16_LOAD_W + ci] = chunk[ci]
-                var pair = pair_bf.cast[DType.float32]()
+                var pair = pair_bf.cast[.float32]()
                 var gate, up = pair.deinterleave()
 
                 # silu(g) and the final SF reciprocal use `recip()`
@@ -3855,10 +3838,10 @@ struct Grouped1D1DMatmulKernel[
                 var output_scale = Float32(0.0)
                 if block_max != Float32(0.0):
                     comptime if is_mxfp8:
-                        output_scale = recip(sf_byte.cast[DType.float32]())
+                        output_scale = recip(sf_byte.cast[.float32]())
                     else:
                         output_scale = tensor_sf * recip(
-                            sf_byte.cast[DType.float32]()
+                            sf_byte.cast[.float32]()
                         )
 
                 var z_scaled = z * output_scale
@@ -3869,10 +3852,10 @@ struct Grouped1D1DMatmulKernel[
                 # under the kernel's MMA geometry, so word stores
                 # coalesce on the L2 sector.
                 comptime if is_mxfp8:
-                    var packed16 = z_scaled.cast[DType.float8_e4m3fn]()
+                    var packed16 = z_scaled.cast[.float8_e4m3fn]()
                     if in_bounds and m_global < m_end:
                         var byte_base_global = Int(n_abs // 2) + Int(k_post)
-                        var packed_u32 = bitcast[DType.uint32, 4](packed16)
+                        var packed_u32 = bitcast[.uint32, 4](packed16)
                         swiglu_out.store_packed_word(
                             Int(m_global), byte_base_global, packed_u32[0]
                         )

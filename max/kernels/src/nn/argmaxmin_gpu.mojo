@@ -55,7 +55,7 @@ def _argmaxmin_vec_update[
     dtype: DType, largest: Bool, simd_width: Int
 ](
     mut best_vals: SIMD[dtype, simd_width],
-    mut best_idxs: SIMD[DType.int32, simd_width],
+    mut best_idxs: SIMD[.int32, simd_width],
     vals: SIMD[dtype, simd_width],
     base: Int,
 ):
@@ -65,8 +65,8 @@ def _argmaxmin_vec_update[
     the lowest index wins a tie. NaN never compares greater and is therefore
     ignored, matching `TopK_2.insert`.
     """
-    comptime lane_offsets = iota[DType.int32, simd_width]()
-    var better: SIMD[DType.bool, simd_width]
+    comptime lane_offsets = iota[.int32, simd_width]()
+    var better: SIMD[.bool, simd_width]
     comptime if largest:
         better = vals.gt(best_vals)
     else:
@@ -88,7 +88,7 @@ def _argmaxmin_scan[
     tid: Int,
     block_size: Int,
     mut best_vals: SIMD[dtype, simd_width],
-    mut best_idxs: SIMD[DType.int32, simd_width],
+    mut best_idxs: SIMD[.int32, simd_width],
 ):
     """Streams one row once, accumulating a per-lane (extremum, index)."""
     var lane_stride = block_size * simd_width
@@ -134,7 +134,7 @@ def _argmaxmin_block_partial[
 ) -> TopK_2[dtype, largest]:
     """Reduces `row[begin : begin + count]` to one (extremum, global index)."""
     var best_vals = SIMD[dtype, simd_width](_topk_dead_val[dtype, largest]())
-    var best_idxs = SIMD[DType.int32, simd_width](0)
+    var best_idxs = SIMD[.int32, simd_width](0)
     var chunk = row.unsafe_offset(begin)
 
     if aligned:
@@ -291,9 +291,9 @@ def _argmaxmin_combine_kernel[
         var total = _block_reduce_topk[ascending=largest](partial)
 
         if tid == 0:
-            out_idxs.ptr.unsafe_offset(row_id)[] = Scalar[DType.int](
-                total.p
-            ).cast[out_idx_type]()
+            out_idxs.ptr.unsafe_offset(row_id)[] = Int(total.p).cast[
+                out_idx_type
+            ]()
 
 
 def argmaxmin_gpu[
@@ -395,9 +395,7 @@ def argmaxmin_gpu[
             combine_block_size = WARP_SIZE
 
         var part_vals = ctx.enqueue_create_buffer[dtype](num_rows * num_splits)
-        var part_idxs = ctx.enqueue_create_buffer[DType.int32](
-            num_rows * num_splits
-        )
+        var part_idxs = ctx.enqueue_create_buffer[.int32](num_rows * num_splits)
 
         comptime scan_kernel = _argmaxmin_scan_kernel[
             dtype,

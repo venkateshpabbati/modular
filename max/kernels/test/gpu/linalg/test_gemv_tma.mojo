@@ -92,14 +92,12 @@ def gemv_tma_kernel[
 
     var a_smem_base = rebind[
         UnsafePointer[
-            Scalar[dtype],
-            address_space=AddressSpace.SHARED,
-            UntrackedOrigin[mut=True],
+            Scalar[dtype], address_space=.SHARED, UntrackedOrigin[mut=True]
         ]
     ](
         external_memory[
             Scalar[dtype],
-            address_space=AddressSpace.SHARED,
+            address_space=.SHARED,
             alignment=128,
             name="tmem_A_dynamic_shared_memory",
         ]()
@@ -116,7 +114,7 @@ def gemv_tma_kernel[
     var a_smem = LayoutTensorIter[
         dtype,
         a_smem_layout,
-        address_space=AddressSpace.SHARED,
+        address_space=.SHARED,
         alignment=128,
         circular=False,
     ](
@@ -127,7 +125,7 @@ def gemv_tma_kernel[
     var b_smem = LayoutTensorIter[
         dtype,
         b_smem_layout,
-        address_space=AddressSpace.SHARED,
+        address_space=.SHARED,
         alignment=128,
         circular=False,
     ](
@@ -436,16 +434,16 @@ def test_gemv_tma[
 def main() raises:
     with DeviceContext() as ctx:
         var benchmark = is_benchmark()
-        test_gemv_tma[DType.bfloat16](
+        test_gemv_tma[.bfloat16](
             ctx, Idx[256], Idx[1], Idx[256], benchmark=benchmark
         )
-        test_gemv_tma[DType.bfloat16](
+        test_gemv_tma[.bfloat16](
             ctx, Idx[4096], Idx[1], Idx[4096], benchmark=benchmark
         )
 
-        test_gemv_tma[DType.float32](
+        test_gemv_tma[.float32](
             ctx, Idx[256], Idx[1], Idx[256], benchmark=benchmark
         )
-        test_gemv_tma[DType.float32](
+        test_gemv_tma[.float32](
             ctx, Idx[4096], Idx[1], Idx[4096], benchmark=benchmark
         )

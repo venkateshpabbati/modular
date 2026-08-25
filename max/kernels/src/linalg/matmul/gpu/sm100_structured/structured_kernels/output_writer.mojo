@@ -260,8 +260,8 @@ struct TileWriter[
     @always_inline
     @staticmethod
     def get_epilogue_dtype() -> DType:
-        if (Self.a_type == Self.c_type == DType.bfloat16) or (
-            Self.a_type == DType.uint8 and Self.c_type == DType.bfloat16
+        if (Self.a_type == Self.c_type == .bfloat16) or (
+            Self.a_type == .uint8 and Self.c_type == .bfloat16
         ):
             return DType.bfloat16
         else:
@@ -354,7 +354,7 @@ struct TileWriter[
         m_end: UInt32,
         expert_scale: Float32,
         c_tensor: TileTensor[
-            mut=True, dtype=Self.c_type, LayoutType=c_tensor_layout, ...
+            mut=True, Self.c_type, LayoutType=c_tensor_layout, ...
         ],
     ):
         """Write with absolute coordinates and bounds checking.
@@ -596,10 +596,7 @@ struct TileWriter[
             Scalar[Self.epilogue_dtype], Self.rep_frag_size
         ],
         c_smem_tile: TileTensor[
-            Self.c_type,
-            c_tile_layout,
-            MutAnyOrigin,
-            address_space=AddressSpace.SHARED,
+            Self.c_type, c_tile_layout, MutAnyOrigin, address_space=.SHARED
         ],
         warp_id: UInt32,
         lane: UInt32,
@@ -651,10 +648,7 @@ struct TileWriter[
     ](
         self,
         c_smem_tile: TileTensor[
-            Self.c_type,
-            c_tile_layout,
-            MutAnyOrigin,
-            address_space=AddressSpace.SHARED,
+            Self.c_type, c_tile_layout, MutAnyOrigin, address_space=.SHARED
         ],
         c_coord: Tuple[UInt32, UInt32],
         batch_idx: UInt32,
@@ -922,7 +916,7 @@ struct TileWriter[
         m_end: UInt32,
         expert_scale: Float32,
         c_tensor: TileTensor[
-            mut=True, dtype=Self.c_type, LayoutType=c_tensor_layout, ...
+            mut=True, Self.c_type, LayoutType=c_tensor_layout, ...
         ],
     ):
         """Internal implementation of write with absolute coordinates and bounds checking.
@@ -1171,13 +1165,10 @@ struct TileWriter[
         c_smem_layout: TensorLayout,
     ](
         c_smem_tile: TileTensor[
-            Self.c_type,
-            c_smem_layout,
-            MutAnyOrigin,
-            address_space=AddressSpace.SHARED,
+            Self.c_type, c_smem_layout, MutAnyOrigin, address_space=.SHARED
         ],
         c_tensor: TileTensor[
-            mut=True, dtype=Self.c_type, LayoutType=c_tensor_layout, ...
+            mut=True, Self.c_type, LayoutType=c_tensor_layout, ...
         ],
         m_abs: UInt32,
         n_abs: UInt32,
@@ -1241,7 +1232,7 @@ struct TileWriter[
             comptime for j in range(zipped.shape[1][0].value()):
                 var input_crd = RuntimeTuple[
                     IntTuple(UNKNOWN_VALUE, j),
-                    element_type=DType.uint32,
+                    element_type=.uint32,
                 ](thread_idx.x, j)
                 var linear_idx = rt_crd2idx[
                     IntTuple(UNKNOWN_VALUE, j),
@@ -1300,10 +1291,10 @@ struct TileWriter[
         c_tensor_layout: TensorLayout,
     ](
         c_smem_ptr: UnsafePointer[
-            Scalar[Self.c_type], _, address_space=AddressSpace.SHARED
+            Scalar[Self.c_type], _, address_space=.SHARED
         ],
         c_tensor: TileTensor[
-            mut=True, dtype=Self.c_type, LayoutType=c_tensor_layout, ...
+            mut=True, Self.c_type, LayoutType=c_tensor_layout, ...
         ],
         m_abs: UInt32,
         n_abs: UInt32,
@@ -1715,10 +1706,7 @@ struct TileWriter[
         c_tiles: Self.CTileArray,
         output_stage: Self.Stage,
         epilogue_tile: TileTensor[
-            Self.c_type,
-            epilogue_layout,
-            MutAnyOrigin,
-            address_space=AddressSpace.SHARED,
+            Self.c_type, epilogue_layout, MutAnyOrigin, address_space=.SHARED
         ],
         tile_coord: Tuple[UInt32, UInt32, UInt32],
         c_shape: Tuple[UInt32, UInt32],
@@ -1992,10 +1980,7 @@ struct TileWriter[
         c_tiles: Self.CTileArray,
         output_stage: Self.Stage,
         epilogue_tile: TileTensor[
-            Self.c_type,
-            epilogue_layout,
-            MutAnyOrigin,
-            address_space=AddressSpace.SHARED,
+            Self.c_type, epilogue_layout, MutAnyOrigin, address_space=.SHARED
         ],
         tile_coord: Tuple[UInt32, UInt32, UInt32],
         c_shape: Tuple[UInt32, UInt32],
@@ -2201,7 +2186,7 @@ struct TileWriter[
         output_stage: Self.Stage,
         mut epilogue_pipeline: ProducerConsumerPipeline[num_epi_stages],
         epilogue_tiles_base: UnsafePointer[
-            Scalar[Self.c_type], MutAnyOrigin, address_space=AddressSpace.SHARED
+            Scalar[Self.c_type], MutAnyOrigin, address_space=.SHARED
         ],
         epilogue_tile_elems: Int,
         tile_coord: Tuple[UInt32, UInt32, UInt32],

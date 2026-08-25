@@ -745,6 +745,14 @@ This version is still a work in progress.
 - `max.pipelines.lib.LoRAConfig` and `max.pipelines.lib.ProfilingConfig` are
   now immutable (pydantic `frozen=True`); assigning to a field after
   construction raises a `ValidationError`. Construct with the desired values.
+
+- `KVCacheConfig` and nested `KVConnectorConfig` are now immutable:
+  assigning to a field after construction raises a pydantic
+  `ValidationError`. Construct them with the values you need.
+  Architectures that need KV-head replication declare
+  `requires_kv_head_replication`; construction sets the flag on the
+  model's KV-cache config.
+
 - The KV cache connector is now configured as a single object: its type moved
   onto `--kv-connector-config` as a `type` field, and the separate
   `--kv-connector` flag is removed. Replace `--kv-connector rust_tiered` with
@@ -846,6 +854,15 @@ This version is still a work in progress.
   `PipelineConfig.model.max_length`, which keep their names.
 
 ## Fixes
+
+- Fixed reductions over a zero-extent axis — for example `ops.sum(x, axis=1)`
+  where that axis has length `0` — leaving their output unwritten, along with
+  anything fused into the reduction's epilogue. Each now writes its identity:
+  `0` for `sum`, `1` for `prod`, the dtype's minimum for `max` and its maximum
+  for `min`, index `0` for `argmax` and `argmin`, and NaN for floating-point
+  `mean` (as `numpy.mean` reports). Integer `mean` returns `0`. Note that
+  `max`, `min`, `argmax`, and `argmin` return an identity here rather than
+  raising the way numpy does.
 
 - Fixed run-to-run nondeterminism of `layer_norm`, `rms_norm`, and other
   Row-API rowwise reductions on Apple Silicon GPUs: a block that reduced

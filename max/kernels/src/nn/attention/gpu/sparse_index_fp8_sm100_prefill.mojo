@@ -411,12 +411,10 @@ def _fp8_index_score_prefill_kernel_sm100[
     k_operand: KOperand,
     ks_operand: KSOperand,
     valid_length: TileTensor[
-        DType.uint32, VLLT, ImmutAnyOrigin, Storage=VLStorageType
+        .uint32, VLLT, ImmutAnyOrigin, Storage=VLStorageType
     ],
-    q_s: TileTensor[DType.float32, QSLT, ImmutAnyOrigin, Storage=QSStorageType],
-    output: TileTensor[
-        DType.float32, OutLT, MutAnyOrigin, Storage=OutStorageType
-    ],
+    q_s: TileTensor[.float32, QSLT, ImmutAnyOrigin, Storage=QSStorageType],
+    output: TileTensor[.float32, OutLT, MutAnyOrigin, Storage=OutStorageType],
     max_num_keys_dev: Int32,
     causal_dev: Int32,
     num_key_parts_dev: Int32,
@@ -605,7 +603,7 @@ def _fp8_index_score_prefill_kernel_sm100[
     comptime q_elems = MMA_N * depth
     var smem = external_memory[
         Scalar[dtype],
-        address_space=AddressSpace.SHARED,
+        address_space=.SHARED,
         alignment=128,
         name="fp8_index_sm100_prefill_smem",
     ]()
@@ -752,7 +750,7 @@ def _fp8_index_score_prefill_kernel_sm100[
             if key < num_keys:
                 return ks_operand.block_paged_ptr[1](
                     UInt32(b), UInt32(key), UInt32(0), UInt32(0)
-                )[0].cast[DType.float32]()
+                )[0].cast[.float32]()
             return 0.0
 
         # Rotate that gather a whole key tile ahead. It is a two-hop dependent load
@@ -1054,9 +1052,7 @@ def _fp8_index_score_prefill_kernel_sm100[
                     k_operand.row_idx(UInt32(b), UInt32(it * Int32(BM_key)))
                 )
                 var k_dst = TileTensor[
-                    dtype,
-                    type_of(k_flat_layout),
-                    address_space=AddressSpace.SHARED,
+                    dtype, type_of(k_flat_layout), address_space=.SHARED
                 ](k_smem + s * UInt32(k_elems), k_flat_layout)
                 expect_bytes_pred(
                     k_full + s,
@@ -1066,9 +1062,7 @@ def _fp8_index_score_prefill_kernel_sm100[
                 k_tma.async_copy_3d_elect(k_dst, k_full[s], (0, 0, k_row0), e)
                 comptime if with_q:
                     var q_dst = TileTensor[
-                        dtype,
-                        type_of(q_flat_layout),
-                        address_space=AddressSpace.SHARED,
+                        dtype, type_of(q_flat_layout), address_space=.SHARED
                     ](q_smem, q_flat_layout)
                     q_tma.async_copy_3d_elect(
                         q_dst,
@@ -1168,11 +1162,9 @@ def fp8_index_score_sm100_prefill[
     k_tma: KTMATileT[dtype, BM_key, depth],
     k_operand: KOperand,
     ks_operand: KSOperand,
-    valid_length: TileTensor[
-        mut=False, DType.uint32, ..., Storage=VLStorageType
-    ],
-    q_s: TileTensor[mut=False, DType.float32, ..., Storage=QSStorageType],
-    output: TileTensor[DType.float32, ..., Storage=OutStorageType],
+    valid_length: TileTensor[mut=False, .uint32, ..., Storage=VLStorageType],
+    q_s: TileTensor[mut=False, .float32, ..., Storage=QSStorageType],
+    output: TileTensor[.float32, ..., Storage=OutStorageType],
     batch_size: Int,
     max_seq_len: Int,
     max_num_keys: Int,

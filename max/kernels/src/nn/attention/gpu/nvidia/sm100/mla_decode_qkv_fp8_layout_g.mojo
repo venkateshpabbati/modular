@@ -358,7 +358,7 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
             Self.AccumType,
             type_of(smem_1d_layout),
             MutAnyOrigin,
-            address_space=AddressSpace.SHARED,
+            address_space=.SHARED,
         ](li_smem, smem_1d_layout)
 
         var corr_scale_tmem = tmem_addr + UInt32(Self.config.TMEM_CORR_SCALE)
@@ -423,7 +423,7 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
 
             # Load S TMEM -> registers (16 fp32/lane, lane_id == row).
             var s_row = tt_stack_allocation[
-                dtype=Self.AccumType, address_space=AddressSpace.LOCAL
+                dtype=Self.AccumType, address_space=.LOCAL
             ](row_major[half_load]())
             var s_row_val = tcgen05_ld[
                 datapaths=32,
@@ -504,7 +504,7 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
                 Self.AccumType,
                 type_of(smem_1d_layout),
                 MutAnyOrigin,
-                address_space=AddressSpace.SHARED,
+                address_space=.SHARED,
             ](max_smem + buf_offset, smem_1d_layout)
             max_buf[lane_id] = current_max
             named_barrier[Int32(WARPGROUP_SIZE)](2)
@@ -658,10 +658,10 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
         # 4 warps acquire/commit every slot to keep the 128-thread
         # producer barrier balanced; only the owning warp writes data.
         comptime assert (
-            Self.AccumType == DType.float32
+            Self.AccumType == .float32
         ), "accumulator type should be float32"
         comptime assert (
-            Self.output_type == DType.bfloat16
+            Self.output_type == .bfloat16
         ), "output type should be bfloat16"
 
         comptime DecodeOutProducerType_LG = DecodeOutProducer[
@@ -705,7 +705,7 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
                 Self.BN_PV // 2
             )
             var o_row_subtile_LG = tt_stack_allocation[
-                dtype=Self.AccumType, address_space=AddressSpace.LOCAL
+                dtype=Self.AccumType, address_space=.LOCAL
             ](row_major[per_warp_elems_LG]())
             var _o_ld_LG = tcgen05_ld[
                 datapaths=32,
@@ -828,7 +828,7 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
                                 Self.output_type,
                                 type_of(o_tt_layout_LG),
                                 MutAnyOrigin,
-                                address_space=AddressSpace.SHARED,
+                                address_space=.SHARED,
                             ](q_stage_ptr_LG, o_tt_layout_LG)
                             if is_leader:
                                 fence_async_view_proxy()
@@ -847,7 +847,7 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
                             Self.output_type,
                             type_of(o_tt_layout_LG),
                             MutAnyOrigin,
-                            address_space=AddressSpace.SHARED,
+                            address_space=.SHARED,
                         ](stage_ptr_LG, o_tt_layout_LG)
                         if is_leader:
                             fence_async_view_proxy()
@@ -970,7 +970,7 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
                     ) * UInt32(o_stride)
                     var o_row_subtile = tt_stack_allocation[
                         dtype=Self.AccumType,
-                        address_space=AddressSpace.LOCAL,
+                        address_space=.LOCAL,
                     ](row_major[per_warp_corr_elems]())
                     var _o_ld_corr = tcgen05_ld[
                         datapaths=32,
@@ -1060,11 +1060,9 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
             MaskType=Self.MaskType,
             SplitAccumType=Self.SplitAccumType,
         ],
-        scales_ptr: UnsafePointer[Scalar[DType.float32], origin=MutAnyOrigin],
+        scales_ptr: UnsafePointer[Float32, origin=MutAnyOrigin],
         scalar_args: TileTensor[
-            DType.int64,
-            RowMajorLayout[ComptimeInt[3]],
-            MutAnyOrigin,
+            .int64, RowMajorLayout[ComptimeInt[3]], MutAnyOrigin
         ],
     ):
         comptime assert Self.config.decode_layout_g, (
@@ -1108,7 +1106,7 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
                 UnsafePointer[
                     Scalar[Self.ValidLengthType.dtype],
                     ImmutAnyOrigin,
-                    address_space=AddressSpace.GENERIC,
+                    address_space=.GENERIC,
                 ]
             ](valid_length.value()),
             q_max_seq_len,
@@ -1214,7 +1212,7 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
         # SMEM allocation: Q FP8, KV stages, P stages, max/li, barriers.
         var q_smem = external_memory[
             Scalar[Self.fp8_type],
-            address_space=AddressSpace.SHARED,
+            address_space=.SHARED,
             alignment=128,
             name="mha_dynamic_shared_memory",
         ]()
@@ -1490,7 +1488,7 @@ struct MLA_SM100_Decode_QKV_FP8_Layout_G[
                 Self.kv_type,
                 type_of(q_tt_layout),
                 MutAnyOrigin,
-                address_space=AddressSpace.SHARED,
+                address_space=.SHARED,
             ](q_smem.bitcast[Scalar[Self.kv_type]](), q_tt_layout)
             q_tma.async_copy(q_smem_tensor, mbar_q[], (0, row))
 

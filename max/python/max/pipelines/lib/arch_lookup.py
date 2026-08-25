@@ -230,6 +230,12 @@ class SupportedArchitecture:
     the max sequence length of the model.
     """
 
+    requires_kv_head_replication: bool = False
+    """If True, construction sets ``allow_kv_head_replication`` on the model's
+    KV-cache config. Needed when tensor parallelism is wider than the KV-head
+    count.
+    """
+
     tool_parser: str | Callable[[HuggingFaceRepo], str] | None = None
     """Optional default tool parser for this architecture.
 
@@ -321,7 +327,7 @@ class SupportedArchitecture:
     this architecture.
 
     When set, ``PipelineConfig`` uses the planner to estimate weight size,
-    activation memory, signal-buffer memory, and vision cache entry bytes.
+    activation memory, and signal-buffer memory.
     Autoregressive text-generation models should set this to
     :class:`~max.pipelines.kv_cache.PagedMemoryPlanner` (or a subclass with
     architecture-specific overrides).

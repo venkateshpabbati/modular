@@ -180,11 +180,11 @@ def _pipeline_resolve_mocks(
             "plan_from_sizes",
             side_effect=lambda pipeline_config, model_config, *a, **kw: (
                 MemoryPlan(
-                    max_batch_size=1,
+                    planned_max_batch_size=1,
                     footprint=0,
                     planned_max_length=model_config.max_length,
                     device_specs=tuple(model_config.device_specs),
-                    max_batch_total_tokens=pipeline_config.runtime.max_batch_total_tokens,
+                    planned_max_batch_total_tokens=pipeline_config.runtime.max_batch_total_tokens,
                 )
             ),
         ),
@@ -853,6 +853,71 @@ class TestRequiredArguments:
             # Registry-phase resolution must not undo the construction-time
             # override.
             assert _model(config).kv_cache.enable_prefix_caching is False
+
+
+# ---------------------------------------------------------------------------
+# Category I2: Architecture-declared KV-head replication
+# ---------------------------------------------------------------------------
+
+
+class TestArchKVHeadReplication:
+    """Construction sets ``allow_kv_head_replication`` from the architecture."""
+
+    @prepare_registry
+    def test_declaring_arch_enables_replication(self) -> None:
+        arch = dataclasses.replace(
+            DUMMY_LLAMA_ARCH, requires_kv_head_replication=True
+        )
+        PIPELINE_REGISTRY.register(arch)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _make_local_repo(
+                tmpdir, safetensors_files={"model.safetensors": {"w": "BF16"}}
+            )
+            config = _make_pipeline_config(tmpdir)
+            assert _model(config).kv_cache.allow_kv_head_replication is True
+
+    @prepare_registry
+    def test_non_declaring_arch_keeps_replication_off(self) -> None:
+        PIPELINE_REGISTRY.register(DUMMY_LLAMA_ARCH)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _make_local_repo(
+                tmpdir, safetensors_files={"model.safetensors": {"w": "BF16"}}
+            )
+            config = _make_pipeline_config(tmpdir)
+            assert _model(config).kv_cache.allow_kv_head_replication is False
+
+    @prepare_registry
+    def test_draft_arch_declaration_applies_to_draft_config(self) -> None:
+        """A declaring draft flips the draft config; the target stays off."""
+        PIPELINE_REGISTRY.register(DUMMY_GEMMA_ARCH)
+        PIPELINE_REGISTRY.register(
+            dataclasses.replace(
+                DUMMY_LLAMA_ARCH, requires_kv_head_replication=True
+            )
+        )
+        with (
+            tempfile.TemporaryDirectory() as target_dir,
+            tempfile.TemporaryDirectory() as draft_dir,
+        ):
+            _make_local_repo(
+                target_dir,
+                hf_config=_GEMMA_CONFIG,
+                safetensors_files={"model.safetensors": {"w": "BF16"}},
+            )
+            _make_local_repo(
+                draft_dir,
+                safetensors_files={"model.safetensors": {"w": "BF16"}},
+            )
+            config = _make_pipeline_config(
+                target_dir,
+                draft_model=MAXModelConfig(
+                    model_path=draft_dir, device_specs=[GPU_DEVICE_SPEC]
+                ),
+                speculative=SpeculativeConfig(speculative_method="mtp"),
+            )
+            assert config.draft_model is not None
+            assert config.draft_model.kv_cache.allow_kv_head_replication is True
+            assert _model(config).kv_cache.allow_kv_head_replication is False
 
 
 # ---------------------------------------------------------------------------

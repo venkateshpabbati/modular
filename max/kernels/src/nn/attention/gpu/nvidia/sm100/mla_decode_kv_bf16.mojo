@@ -235,11 +235,9 @@ struct MLA_SM100_Decode_KV_BF16[
             MaskType=Self.MaskType,
             SplitAccumType=Self.SplitAccumType,
         ],
-        scales_ptr: UnsafePointer[Scalar[DType.float32], origin=MutAnyOrigin],
+        scales_ptr: UnsafePointer[Float32, origin=MutAnyOrigin],
         scalar_args: TileTensor[
-            DType.int64,
-            RowMajorLayout[ComptimeInt[3]],
-            MutAnyOrigin,
+            .int64, RowMajorLayout[ComptimeInt[3]], MutAnyOrigin
         ],
     ):
         # SlidingWindowCausalMask is supported ONLY by the native FP8 backend
@@ -274,7 +272,7 @@ struct MLA_SM100_Decode_KV_BF16[
                 UnsafePointer[
                     Scalar[Self.ValidLengthType.dtype],
                     ImmutAnyOrigin,
-                    address_space=AddressSpace.GENERIC,
+                    address_space=.GENERIC,
                 ]
             ](valid_length.value()),
             q_max_seq_len,
@@ -324,7 +322,7 @@ struct MLA_SM100_Decode_KV_BF16[
                 return  # This query position doesn't exist for this batch
         var q_smem = external_memory[
             Scalar[Self.q_type],
-            address_space=AddressSpace.SHARED,
+            address_space=.SHARED,
             alignment=128,
             name="mha_dynamic_shared_memory",
         ]()
