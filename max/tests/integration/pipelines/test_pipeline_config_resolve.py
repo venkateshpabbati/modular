@@ -42,7 +42,7 @@ from max.pipelines.lib import MAXModelConfig, MemoryEstimator
 from max.pipelines.lib.config import SpeculativeConfig
 from max.pipelines.lib.config.model_config import (
     _device_specs_for_encoding,
-    _populate_weights_and_encoding,
+    _resolve_weights_and_encoding,
     _select_dtype_cast,
     _select_quantization_encoding,
 )
@@ -238,7 +238,13 @@ def _resolve_config(config: PipelineConfig) -> None:
     resolved_encoding = _select_quantization_encoding(
         _model(config), arch.default_encoding
     )
-    _model(config).quantization_encoding = resolved_encoding
+    if _model(config).quantization_encoding != resolved_encoding:
+        # Only directly-constructed configs (a few tests below) reach here:
+        # from_args configs already carry the resolved encoding, and their
+        # manifest is frozen by resolve().
+        config.models["main"] = _model(config).model_copy(
+            update={"quantization_encoding": resolved_encoding}
+        )
     MemoryEstimator.plan(config, arch)
 
 
@@ -657,10 +663,10 @@ class TestStructuredOutputBackendResolution:
                 hf_config=_GEMMA_CONFIG,
                 safetensors_files={"model.safetensors": {"w": "BF16"}},
             )
-            config = _make_pipeline_config(tmpdir)
             # Constructing with the field set records it in model_fields_set.
-            config.sampling = SamplingConfig(
-                structured_output_backend="llguidance"
+            config = _make_pipeline_config(
+                tmpdir,
+                sampling=SamplingConfig(structured_output_backend="llguidance"),
             )
             with _pipeline_resolve_mocks():
                 _resolve_config(config)
@@ -701,9 +707,9 @@ class TestStructuredOutputAnyWhitespaceResolution:
                 hf_config=_GEMMA_CONFIG,
                 safetensors_files={"model.safetensors": {"w": "BF16"}},
             )
-            config = _make_pipeline_config(tmpdir)
-            config.sampling = SamplingConfig(
-                structured_output_any_whitespace=False
+            config = _make_pipeline_config(
+                tmpdir,
+                sampling=SamplingConfig(structured_output_any_whitespace=False),
             )
             with _pipeline_resolve_mocks():
                 _resolve_config(config)
@@ -853,71 +859,6 @@ class TestRequiredArguments:
             # Registry-phase resolution must not undo the construction-time
             # override.
             assert _model(config).kv_cache.enable_prefix_caching is False
-
-
-# ---------------------------------------------------------------------------
-# Category I2: Architecture-declared KV-head replication
-# ---------------------------------------------------------------------------
-
-
-class TestArchKVHeadReplication:
-    """Construction sets ``allow_kv_head_replication`` from the architecture."""
-
-    @prepare_registry
-    def test_declaring_arch_enables_replication(self) -> None:
-        arch = dataclasses.replace(
-            DUMMY_LLAMA_ARCH, requires_kv_head_replication=True
-        )
-        PIPELINE_REGISTRY.register(arch)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            _make_local_repo(
-                tmpdir, safetensors_files={"model.safetensors": {"w": "BF16"}}
-            )
-            config = _make_pipeline_config(tmpdir)
-            assert _model(config).kv_cache.allow_kv_head_replication is True
-
-    @prepare_registry
-    def test_non_declaring_arch_keeps_replication_off(self) -> None:
-        PIPELINE_REGISTRY.register(DUMMY_LLAMA_ARCH)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            _make_local_repo(
-                tmpdir, safetensors_files={"model.safetensors": {"w": "BF16"}}
-            )
-            config = _make_pipeline_config(tmpdir)
-            assert _model(config).kv_cache.allow_kv_head_replication is False
-
-    @prepare_registry
-    def test_draft_arch_declaration_applies_to_draft_config(self) -> None:
-        """A declaring draft flips the draft config; the target stays off."""
-        PIPELINE_REGISTRY.register(DUMMY_GEMMA_ARCH)
-        PIPELINE_REGISTRY.register(
-            dataclasses.replace(
-                DUMMY_LLAMA_ARCH, requires_kv_head_replication=True
-            )
-        )
-        with (
-            tempfile.TemporaryDirectory() as target_dir,
-            tempfile.TemporaryDirectory() as draft_dir,
-        ):
-            _make_local_repo(
-                target_dir,
-                hf_config=_GEMMA_CONFIG,
-                safetensors_files={"model.safetensors": {"w": "BF16"}},
-            )
-            _make_local_repo(
-                draft_dir,
-                safetensors_files={"model.safetensors": {"w": "BF16"}},
-            )
-            config = _make_pipeline_config(
-                target_dir,
-                draft_model=MAXModelConfig(
-                    model_path=draft_dir, device_specs=[GPU_DEVICE_SPEC]
-                ),
-                speculative=SpeculativeConfig(speculative_method="mtp"),
-            )
-            assert config.draft_model is not None
-            assert config.draft_model.kv_cache.allow_kv_head_replication is True
-            assert _model(config).kv_cache.allow_kv_head_replication is False
 
 
 # ---------------------------------------------------------------------------
@@ -1162,7 +1103,7 @@ def test_construction_downcast_warns_once(
 
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger="max.pipelines"):
-            _populate_weights_and_encoding(
+            _resolve_weights_and_encoding(
                 _model(config),
                 default_encoding=DUMMY_LLAMA_ARCH.default_encoding,
                 supported_encodings=DUMMY_LLAMA_ARCH.supported_encodings,

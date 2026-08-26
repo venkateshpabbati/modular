@@ -23,7 +23,7 @@ from std.gpu import (
     block_idx,
     thread_idx,
 )
-from layout import TensorLayout, TileTensor
+from layout import PointerStorage, TensorLayout, TensorStorage, TileTensor
 from std.utils.index import IndexList
 from max.algorithm import sync_parallelize
 from max.gpu.host import DeviceContext
@@ -85,6 +85,7 @@ def selective_scan_fwd_gpu[
     D_LT: TensorLayout,
     z_LT: TensorLayout,
     delta_bias_LT: TensorLayout,
+    Storage: TensorStorage = PointerStorage[element_width=1],
 ](
     total_batch_dim: Int32,
     batch: Int32,
@@ -92,17 +93,25 @@ def selective_scan_fwd_gpu[
     seqlen: Int32,
     group_size: Int32,
     delta_softplus: Int8,
-    output: TileTensor[kernel_dtype, output_LT, MutUntrackedOrigin],
-    x: TileTensor[kernel_dtype, x_LT, MutUntrackedOrigin],
-    out_z: TileTensor[kernel_dtype, out_z_LT, MutUntrackedOrigin],
-    u: TileTensor[kernel_dtype, u_LT, MutUntrackedOrigin],
-    delta: TileTensor[kernel_dtype, delta_LT, MutUntrackedOrigin],
-    A: TileTensor[kernel_dtype, A_LT, MutUntrackedOrigin],
-    B: TileTensor[kernel_dtype, B_LT, MutUntrackedOrigin],
-    C: TileTensor[kernel_dtype, C_LT, MutUntrackedOrigin],
-    D: TileTensor[kernel_dtype, D_LT, MutUntrackedOrigin],
-    z: TileTensor[kernel_dtype, z_LT, MutUntrackedOrigin],
-    delta_bias: TileTensor[kernel_dtype, delta_bias_LT, MutUntrackedOrigin],
+    output: TileTensor[
+        kernel_dtype, output_LT, MutUntrackedOrigin, Storage=Storage
+    ],
+    x: TileTensor[kernel_dtype, x_LT, MutUntrackedOrigin, Storage=Storage],
+    out_z: TileTensor[
+        kernel_dtype, out_z_LT, MutUntrackedOrigin, Storage=Storage
+    ],
+    u: TileTensor[kernel_dtype, u_LT, MutUntrackedOrigin, Storage=Storage],
+    delta: TileTensor[
+        kernel_dtype, delta_LT, MutUntrackedOrigin, Storage=Storage
+    ],
+    A: TileTensor[kernel_dtype, A_LT, MutUntrackedOrigin, Storage=Storage],
+    B: TileTensor[kernel_dtype, B_LT, MutUntrackedOrigin, Storage=Storage],
+    C: TileTensor[kernel_dtype, C_LT, MutUntrackedOrigin, Storage=Storage],
+    D: TileTensor[kernel_dtype, D_LT, MutUntrackedOrigin, Storage=Storage],
+    z: TileTensor[kernel_dtype, z_LT, MutUntrackedOrigin, Storage=Storage],
+    delta_bias: TileTensor[
+        kernel_dtype, delta_bias_LT, MutUntrackedOrigin, Storage=Storage
+    ],
     output_strides: Strides3D,
     x_strides: Strides4D,
     out_z_strides: Strides3D,
@@ -134,6 +143,8 @@ def selective_scan_fwd_gpu[
         D_LT: Memory layout of the `D` skip connection tensor.
         z_LT: Memory layout of the `z` gating tensor.
         delta_bias_LT: Memory layout of the `delta_bias` tensor.
+        Storage: Storage policy shared by all tile operands (defaults to
+            `PointerStorage[element_width=1]`).
 
     Args:
         total_batch_dim: Total `(batch, dim)` pairs launched.
@@ -503,6 +514,7 @@ def selective_scan_fwd_gpu_minimal[
     A_LT: TensorLayout,
     B_LT: TensorLayout,
     C_LT: TensorLayout,
+    Storage: TensorStorage = PointerStorage[element_width=1],
 ](
     total_batch_dim: Int32,
     batch: Int32,
@@ -510,13 +522,17 @@ def selective_scan_fwd_gpu_minimal[
     seqlen: Int32,
     group_size: Int32,
     delta_softplus: Int8,
-    output: TileTensor[kernel_dtype, output_LT, MutUntrackedOrigin],
-    x: TileTensor[kernel_dtype, x_LT, MutUntrackedOrigin],
-    u: TileTensor[kernel_dtype, u_LT, MutUntrackedOrigin],
-    delta: TileTensor[kernel_dtype, delta_LT, MutUntrackedOrigin],
-    A: TileTensor[kernel_dtype, A_LT, MutUntrackedOrigin],
-    B: TileTensor[kernel_dtype, B_LT, MutUntrackedOrigin],
-    C: TileTensor[kernel_dtype, C_LT, MutUntrackedOrigin],
+    output: TileTensor[
+        kernel_dtype, output_LT, MutUntrackedOrigin, Storage=Storage
+    ],
+    x: TileTensor[kernel_dtype, x_LT, MutUntrackedOrigin, Storage=Storage],
+    u: TileTensor[kernel_dtype, u_LT, MutUntrackedOrigin, Storage=Storage],
+    delta: TileTensor[
+        kernel_dtype, delta_LT, MutUntrackedOrigin, Storage=Storage
+    ],
+    A: TileTensor[kernel_dtype, A_LT, MutUntrackedOrigin, Storage=Storage],
+    B: TileTensor[kernel_dtype, B_LT, MutUntrackedOrigin, Storage=Storage],
+    C: TileTensor[kernel_dtype, C_LT, MutUntrackedOrigin, Storage=Storage],
     output_strides: Strides3D,
     x_strides: Strides4D,
     u_strides: Strides3D,
@@ -541,6 +557,8 @@ def selective_scan_fwd_gpu_minimal[
         A_LT: Memory layout of the `A` recurrence matrix.
         B_LT: Memory layout of the `B` input projection tensor.
         C_LT: Memory layout of the `C` output projection tensor.
+        Storage: Storage policy shared by all tile operands (defaults to
+            `PointerStorage[element_width=1]`).
 
     Args:
         total_batch_dim: Total number of (batch, dim) pairs launched,
@@ -729,23 +747,32 @@ def selective_scan_update_gpu[
     D_LT: TensorLayout,
     z_LT: TensorLayout,
     dt_bias_LT: TensorLayout,
+    Storage: TensorStorage = PointerStorage[element_width=1],
 ](
     total_batch_dim: Int32,
     batch: Int32,
     dim: Int32,
     group_size: Int32,
     delta_softplus: Int8,
-    state_out: TileTensor[kernel_dtype, state_out_LT, MutUntrackedOrigin],
-    output: TileTensor[kernel_dtype, output_LT, MutUntrackedOrigin],
-    state_in: TileTensor[kernel_dtype, state_in_LT, MutUntrackedOrigin],
-    x: TileTensor[kernel_dtype, x_LT, MutUntrackedOrigin],
-    dt: TileTensor[kernel_dtype, dt_LT, MutUntrackedOrigin],
-    A: TileTensor[kernel_dtype, A_LT, MutUntrackedOrigin],
-    B: TileTensor[kernel_dtype, B_LT, MutUntrackedOrigin],
-    C: TileTensor[kernel_dtype, C_LT, MutUntrackedOrigin],
-    D: TileTensor[kernel_dtype, D_LT, MutUntrackedOrigin],
-    z: TileTensor[kernel_dtype, z_LT, MutUntrackedOrigin],
-    dt_bias: TileTensor[kernel_dtype, dt_bias_LT, MutUntrackedOrigin],
+    state_out: TileTensor[
+        kernel_dtype, state_out_LT, MutUntrackedOrigin, Storage=Storage
+    ],
+    output: TileTensor[
+        kernel_dtype, output_LT, MutUntrackedOrigin, Storage=Storage
+    ],
+    state_in: TileTensor[
+        kernel_dtype, state_in_LT, MutUntrackedOrigin, Storage=Storage
+    ],
+    x: TileTensor[kernel_dtype, x_LT, MutUntrackedOrigin, Storage=Storage],
+    dt: TileTensor[kernel_dtype, dt_LT, MutUntrackedOrigin, Storage=Storage],
+    A: TileTensor[kernel_dtype, A_LT, MutUntrackedOrigin, Storage=Storage],
+    B: TileTensor[kernel_dtype, B_LT, MutUntrackedOrigin, Storage=Storage],
+    C: TileTensor[kernel_dtype, C_LT, MutUntrackedOrigin, Storage=Storage],
+    D: TileTensor[kernel_dtype, D_LT, MutUntrackedOrigin, Storage=Storage],
+    z: TileTensor[kernel_dtype, z_LT, MutUntrackedOrigin, Storage=Storage],
+    dt_bias: TileTensor[
+        kernel_dtype, dt_bias_LT, MutUntrackedOrigin, Storage=Storage
+    ],
     state_out_strides: Strides3D,
     output_strides: Strides2D,
     state_in_strides: Strides3D,
@@ -777,6 +804,8 @@ def selective_scan_update_gpu[
         D_LT: Memory layout of the `D` skip connection tensor.
         z_LT: Memory layout of the `z` gating tensor.
         dt_bias_LT: Memory layout of the `dt_bias` tensor.
+        Storage: Storage policy shared by all tile operands (defaults to
+            `PointerStorage[element_width=1]`).
 
     Args:
         total_batch_dim: Total number of (batch, dim) pairs launched,
@@ -1054,8 +1083,7 @@ def selective_scan_update_cpu[
     var has_z = Int(z.dim[0]()) > 0
     var delta_softplus_bool = Bool(Int(delta_softplus) != 0)
 
-    @__parameter
-    def worker(idx: Int):
+    def worker(idx: Int) {imm}:
         var b, d = divmod(idx, dim)
 
         # Compute group_id for this dimension
@@ -1175,7 +1203,7 @@ def selective_scan_update_cpu[
             out_offset, Scalar[kernel_dtype](out_val.cast[kernel_dtype]())
         )
 
-    sync_parallelize[worker](batch * dim, ctx)
+    sync_parallelize(worker, batch * dim, ctx)
 
 
 def selective_scan_fwd_cpu[
@@ -1213,8 +1241,7 @@ def selective_scan_fwd_cpu[
 ):
     """CPU kernel for selective scan forward pass."""
 
-    @__parameter
-    def worker(idx: Int):
+    def worker(idx: Int) {imm}:
         var b, d = divmod(idx, dim)
 
         # Bounds checking
@@ -1500,7 +1527,7 @@ def selective_scan_fwd_cpu[
                     t_in_chunk = 0
             t += 1
 
-    sync_parallelize[worker](batch * dim, ctx)
+    sync_parallelize(worker, batch * dim, ctx)
 
 
 def selective_scan_fwd_cpu_minimal[
@@ -1570,8 +1597,7 @@ def selective_scan_fwd_cpu_minimal[
         ctx: Device context for parallel execution (defaults to `None`).
     """
 
-    @__parameter
-    def worker(idx: Int):
+    def worker(idx: Int) {imm}:
         var b, d = divmod(idx, dim)
 
         if b >= batch or d >= dim:
@@ -1680,7 +1706,7 @@ def selective_scan_fwd_cpu_minimal[
                     chunk_idx += 1
                     t_in_chunk = 0
 
-    sync_parallelize[worker](batch * dim, ctx)
+    sync_parallelize(worker, batch * dim, ctx)
 
 
 # ===----------------------------------------------------------------------=== #
@@ -1711,6 +1737,7 @@ def ssd_combined_gpu[
     z_LT: TensorLayout,
     delta_bias_LT: TensorLayout,
     gamma_LT: TensorLayout,
+    Storage: TensorStorage = PointerStorage[element_width=1],
 ](
     total_batch_dim: Int32,
     batch: Int32,
@@ -1718,19 +1745,23 @@ def ssd_combined_gpu[
     seqlen: Int32,
     group_size: Int32,
     delta_softplus: Int8,
-    output: TileTensor[kernel_dtype, output_LT, MutAnyOrigin],
-    x: TileTensor[kernel_dtype, x_LT, MutAnyOrigin],
-    out_z: TileTensor[kernel_dtype, out_z_LT, MutAnyOrigin],
-    residual: TileTensor[kernel_dtype, residual_LT, MutAnyOrigin],
-    u: TileTensor[kernel_dtype, u_LT, MutAnyOrigin],
-    delta: TileTensor[kernel_dtype, delta_LT, MutAnyOrigin],
-    A: TileTensor[kernel_dtype, A_LT, MutAnyOrigin],
-    B: TileTensor[kernel_dtype, B_LT, MutAnyOrigin],
-    C: TileTensor[kernel_dtype, C_LT, MutAnyOrigin],
-    D: TileTensor[kernel_dtype, D_LT, MutAnyOrigin],
-    z: TileTensor[kernel_dtype, z_LT, MutAnyOrigin],
-    delta_bias: TileTensor[kernel_dtype, delta_bias_LT, MutAnyOrigin],
-    gamma: TileTensor[kernel_dtype, gamma_LT, MutAnyOrigin],
+    output: TileTensor[kernel_dtype, output_LT, MutAnyOrigin, Storage=Storage],
+    x: TileTensor[kernel_dtype, x_LT, MutAnyOrigin, Storage=Storage],
+    out_z: TileTensor[kernel_dtype, out_z_LT, MutAnyOrigin, Storage=Storage],
+    residual: TileTensor[
+        kernel_dtype, residual_LT, MutAnyOrigin, Storage=Storage
+    ],
+    u: TileTensor[kernel_dtype, u_LT, MutAnyOrigin, Storage=Storage],
+    delta: TileTensor[kernel_dtype, delta_LT, MutAnyOrigin, Storage=Storage],
+    A: TileTensor[kernel_dtype, A_LT, MutAnyOrigin, Storage=Storage],
+    B: TileTensor[kernel_dtype, B_LT, MutAnyOrigin, Storage=Storage],
+    C: TileTensor[kernel_dtype, C_LT, MutAnyOrigin, Storage=Storage],
+    D: TileTensor[kernel_dtype, D_LT, MutAnyOrigin, Storage=Storage],
+    z: TileTensor[kernel_dtype, z_LT, MutAnyOrigin, Storage=Storage],
+    delta_bias: TileTensor[
+        kernel_dtype, delta_bias_LT, MutAnyOrigin, Storage=Storage
+    ],
+    gamma: TileTensor[kernel_dtype, gamma_LT, MutAnyOrigin, Storage=Storage],
     epsilon: Scalar[kernel_dtype],
     weight_offset: Scalar[kernel_dtype],
 ):
@@ -1756,6 +1787,8 @@ def ssd_combined_gpu[
         delta_bias_LT: Memory layout of the `delta_bias` tensor.
         gamma_LT: Memory layout of the `gamma` normalization scale
             tensor.
+        Storage: Storage policy shared by all tile operands (defaults to
+            `PointerStorage[element_width=1]`).
 
     Args:
         total_batch_dim: Total number of (batch, dim) pairs launched,
@@ -2337,8 +2370,7 @@ def ssd_combined_cpu[
     var delta_bias_stride = UInt32(1)
     var gamma_stride = UInt32(1)
 
-    @__parameter
-    def worker(idx: Int):
+    def worker(idx: Int) {imm}:
         var b, d = divmod(idx, dim)
 
         var group_id = d // group_size
@@ -2666,7 +2698,7 @@ def ssd_combined_cpu[
                     t_in_chunk = 0
             t += 1
 
-    sync_parallelize[worker](batch * dim, ctx)
+    sync_parallelize(worker, batch * dim, ctx)
 
 
 # ===----------------------------------------------------------------------=== #
@@ -2834,8 +2866,7 @@ def mamba_split_conv1d_scan_combined_cpu[
     var xBC_start = dim
     var dt_start = 2 * dim + 2 * ngroups * DSTATE
 
-    @__parameter
-    def worker(idx: Int) raises:
+    def worker(idx: Int) raises {imm}:
         var b, d = divmod(idx, dim)
         var h, p = divmod(d, headdim)
         var group_id = h // ngroups if ngroups > 1 else 0
@@ -3199,7 +3230,7 @@ def mamba_split_conv1d_scan_combined_cpu[
                     chunk_idx += 1
                     t_in_chunk = 0
 
-    sync_parallelize[worker](batch * dim, ctx)
+    sync_parallelize(worker, batch * dim, ctx)
 
 
 def mamba_split_conv1d_scan_combined_gpu[

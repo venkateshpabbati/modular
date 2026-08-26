@@ -78,10 +78,10 @@ bool checkConventionsConvertible(ArgConvention expectedConv,
   case ArgConvention::MutRef:
   case ArgConvention::Ref:
   case ArgConvention::Mut:
-    if (actualConv == ArgConvention::ReadMem) {
+    if (actualConv == ArgConvention::ImmMem) {
       // If the actual function accepts a read reference, and we have an
       // owned/mutref/ref/mut, we can make a thunk to convert those nicely.
-    } else if (actualConv == ArgConvention::ReadReg) {
+    } else if (actualConv == ArgConvention::ImmReg) {
       // If the actual function accepts a register-passable read, and we have
       // an owned/mutref/ref/mut, we can make a thunk to convert that nicely.
     } else if (actualConv == expectedConv) {
@@ -91,9 +91,9 @@ bool checkConventionsConvertible(ArgConvention expectedConv,
     }
     break;
 
-  case ArgConvention::ReadMem:
-  case ArgConvention::ReadReg:
-    if (!llvm::is_contained({ArgConvention::ReadMem, ArgConvention::ReadReg},
+  case ArgConvention::ImmMem:
+  case ArgConvention::ImmReg:
+    if (!llvm::is_contained({ArgConvention::ImmMem, ArgConvention::ImmReg},
                             actualConv))
       return false;
     break;
@@ -228,7 +228,6 @@ static FuncType getReducedFnType(FuncType sig) {
   MLIRContext *ctx = sig.getContext();
 
   auto origPogListAttr = sig.getArgListAttrs();
-  ArrayRef<PogMetadataAttr> pogs = origPogListAttr.getPogs();
 
   SmallVector<PassingKind> passingKinds;
   SmallVector<StringAttr> names;
@@ -236,7 +235,7 @@ static FuncType getReducedFnType(FuncType sig) {
   SmallVector<TypedAttr> defaults(sig.getNumArguments(), {});
   for (size_t i = 0, e = sig.getNumArguments(); i != e; ++i) {
     passingKinds.push_back(origPogListAttr.getPassingKind(i));
-    names.push_back(pogs[i].getName());
+    names.push_back(origPogListAttr.getName(i));
     variadics.push_back(origPogListAttr.getVariadicKind(i));
   }
 
@@ -384,20 +383,46 @@ static FnOp generateConversionThunk(Attribute key, ASTDecl &moduleDecl,
 
   std::optional<size_t> thunkVariadicArgIndexOpt =
       thunkSignature.findPackVarArgIndex();
+  std::optional<size_t> actualVariadicArgIndexOpt =
+      actualSignature.findPackVarArgIndex();
 
-  bool actualMemResult = actualSignature.hasMemoryOnlyResult();
-  ArrayRef<Type> actualArgTypes =
-      actualSignature.getArguments().drop_back(actualMemResult);
+  ArrayRef<Type> actualArgTypes = actualSignature.getArguments().drop_back(
+      actualSignature.hasMemoryOnlyResult() + actualSignature.isThrows());
+  ArrayRef<Type> thunkArgTypes = thunkSignature.getArguments().drop_back(
+      thunkSignature.hasMemoryOnlyResult() + thunkSignature.isThrows());
+  std::optional<size_t> actualKwVarArgIndex;
+  std::optional<size_t> thunkKwVarArgIndex;
+  if (!actualArgTypes.empty() &&
+      actualSignature.isKwVarArg(actualArgTypes.size() - 1))
+    actualKwVarArgIndex = actualArgTypes.size() - 1;
+  if (!thunkArgTypes.empty() &&
+      thunkSignature.isKwVarArg(thunkArgTypes.size() - 1))
+    thunkKwVarArgIndex = thunkArgTypes.size() - 1;
+  assert(actualKwVarArgIndex.has_value() == thunkKwVarArgIndex.has_value() &&
+         "function conversion must preserve kwargs");
 
   for (size_t actualArgIndex = 0; actualArgIndex < actualArgTypes.size();
        actualArgIndex++) {
+    bool actualArgIsKwVarArg =
+        actualKwVarArgIndex && actualArgIndex == *actualKwVarArgIndex;
+    bool actualArgIsVariadicPack =
+        actualVariadicArgIndexOpt && thunkVariadicArgIndexOpt &&
+        actualVariadicArgIndexOpt == thunkVariadicArgIndexOpt &&
+        actualArgIndex == *actualVariadicArgIndexOpt;
     bool actualArgIsForVariadic =
-        thunkVariadicArgIndexOpt.has_value() &&
+        !actualArgIsKwVarArg && thunkVariadicArgIndexOpt.has_value() &&
         actualArgIndex >= thunkVariadicArgIndexOpt.value();
 
     Value argForActual;
     KGEN::ArgConvention convForActual;
-    if (actualArgIsForVariadic) {
+    if (actualArgIsKwVarArg) {
+      argForActual = thunk.getArgument(*thunkKwVarArgIndex);
+      convForActual = thunkSignature.getArgConvention(*thunkKwVarArgIndex);
+    } else if (actualArgIsVariadicPack) {
+      argForActual = thunk.getArgument(*thunkVariadicArgIndexOpt);
+      convForActual =
+          thunkSignature.getArgConvention(*thunkVariadicArgIndexOpt);
+    } else if (actualArgIsForVariadic) {
       size_t thunkVariadicArgIndex = thunkVariadicArgIndexOpt.value();
       size_t indexInVariadic = actualArgIndex - thunkVariadicArgIndex;
 
@@ -420,7 +445,7 @@ static FnOp generateConversionThunk(Attribute key, ASTDecl &moduleDecl,
       if (!getItemResult)
         return {};
       argForActual = getItemResult.getMlirValue();
-      convForActual = ArgConvention::ReadMem;
+      convForActual = ArgConvention::ImmMem;
     } else {
       argForActual = thunk.getArgument(actualArgIndex);
       convForActual = thunkSignature.getArgConvention(actualArgIndex);
@@ -442,15 +467,24 @@ static FnOp generateConversionThunk(Attribute key, ASTDecl &moduleDecl,
     case ArgConvention::DeinitMem:
       value = MRValue(argForActual);
       break;
-    case ArgConvention::ReadReg:
+    case ArgConvention::ImmReg:
       value = SRValue(argForActual);
       break;
-    case ArgConvention::ReadMem:
+    case ArgConvention::ImmMem:
       value = MBValue(argForActual);
       break;
     case ArgConvention::Ref:
       value = MBPValue(argForActual);
       break;
+    }
+
+    if (actualArgIsKwVarArg) {
+      operands.add({value, &node}, ArgUnpackStyle::kStarStar);
+      continue;
+    }
+    if (actualArgIsVariadicPack) {
+      operands.add({value, &node}, ArgUnpackStyle::kStar);
+      continue;
     }
 
     // Pass any required-keyword args with a name.

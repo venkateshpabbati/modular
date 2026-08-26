@@ -109,6 +109,9 @@ This version is still a work in progress.
   - Intra-package accesses without explicit `import`s are now an error,
     following a period of deprecation.
 
+- Use of the `read` argument convention is now a hard error, following a period
+  of deprecation; use `imm` instead.
+
 ## Library stabilizations
 
 - String
@@ -138,6 +141,13 @@ This version is still a work in progress.
   `c`. Previously either one reported only the base integer ISA.
 
 - `Bencher.bench_function()` now takes a raising closure.
+
+- The zero-argument `Bench.bench_function()` overload now takes a raising
+  closure as a runtime argument. The compile-time parameter form
+  `bench_function[fn]()` for a raising zero-argument body has been removed.
+
+- The remaining compile-time parameter forms of `Bench.bench_function()` and
+  `Bencher.iter()` have been removed. Pass the closure as a runtime argument.
 
 - `Bencher.iter_preproc()` now takes its closures as runtime arguments instead
   of compile-time parameters, along with an explicit state value that is passed
@@ -281,6 +291,17 @@ This release completes the removal of APIs deprecated during the v1.0 cycle.
 - Removed the temporary `InlineArray` alias for `Array`, including its
   re-exports from `std.collections` and the prelude. Use `Array` directly.
 
+- Removed redundant `Int` overloads across the standard library:
+  `count_leading_zeros()`, `count_trailing_zeros()`, `bit_reverse()`,
+  `byte_swap()`, `pop_count()`, `log2_ceil()`, `next_power_of_two()`, and
+  `prev_power_of_two()` in `std.bit`; `broadcast()` in `std.gpu.primitives`
+  (including the `UInt` overload); `readfirstlane()` in `std.sys`; and
+  `umod()` in `std.math.uutils`. `Int` is an alias for `Scalar[DType.int]`,
+  so the generic `SIMD` overloads already accept `Int` arguments and return
+  `Int`; call sites need no changes. As a side effect, `broadcast()` on
+  `Int`/`UInt` values now shuffles the full 64-bit value instead of silently
+  truncating it to 32 bits.
+
 - Removed the `std.gpu.profiler` module and its `ProfileBlock` context manager.
   It timed host wall-clock, not GPU work, and reported the elapsed time with the
   operands reversed. Time a block of host code with
@@ -307,6 +328,11 @@ This release completes the removal of APIs deprecated during the v1.0 cycle.
   `UntrackedOrigin` for `ExternalOrigin`, `MutUntrackedOrigin` for
   `MutExternalOrigin`, and `ImmUntrackedOrigin` for both
   `ImmutUntrackedOrigin` and `ImmutExternalOrigin`.
+
+- Removed the redundant `Int` overloads of `sqrt()`, `fma()`, `align_down()`,
+  `align_up()`, `clamp()`, and `iota()` from `std.math`. `Int` is an alias for
+  `Scalar[DType.int]`, so the generic `SIMD` overloads already accept `Int`
+  arguments and return `Int`; call sites need no changes.
 
 - Removed the pre-unification pointer aliases `MutUnsafePointer`,
   `ImmUnsafePointer`, `ImmutUnsafePointer`, `ImmutOpaquePointer`,
@@ -381,6 +407,12 @@ This release completes the removal of APIs deprecated during the v1.0 cycle.
   `where Ts.contains[T]()` with such a `T` failed with `lacking evidence to
   prove correctness`, even though `T` was plainly in `Ts`.
 
+- `hash()` on a floating-point `SIMD` value now normalizes the sign of zero, so
+  `hash(-0.0) == hash(0.0)`. Hashing the raw bit pattern broke the `Hashable`
+  contract that equal values hash equally: a `Dict` or `Set` could hold both
+  `-0.0` and `0.0` as separate keys even though they compare equal, and a
+  lookup could then return a value stored under the other key.
+
 - `mojo build` can cross-compile to RISC-V again. Emitting LLVM IR, assembly,
   or an object for a `riscv32` or `riscv64` triple failed with `target '...'
   is not supported by this build`.
@@ -448,6 +480,8 @@ This release completes the removal of APIs deprecated during the v1.0 cycle.
   the `Int` range. Values just past `Int.MAX` (such as `Int.MAX + 1`) no
   longer wrap silently, and `Int.MIN` parses correctly by design rather than
   by wraparound.
+  `atol()` will also now raise instead of aborting on a string that holds only
+  whitespace, or only whitespace and a sign.
 
 - Every value of a struct type whose `@align(N)` exceeds its natural
   alignment is now aligned to `N`, including every element of an array or a

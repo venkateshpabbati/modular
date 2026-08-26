@@ -18,7 +18,7 @@ from std.gpu import (
     block_idx,
     thread_idx,
 )
-from layout import TensorLayout, TileTensor
+from layout import PointerStorage, TensorLayout, TensorStorage, TileTensor
 from std.utils.index import IndexList
 from max.algorithm import sync_parallelize
 from max.gpu.host import DeviceContext
@@ -52,6 +52,7 @@ def varlen_selective_state_update_gpu[
     output_LT: TensorLayout,
     dt_bias_LT: TensorLayout,
     state_batch_indices_LT: TensorLayout,
+    Storage: TensorStorage = PointerStorage[element_width=1],
 ](
     # Grid dimensions
     total_threads: Int32,  # batch * nheads * dim / BLOCK_SIZE_M
@@ -63,18 +64,24 @@ def varlen_selective_state_update_gpu[
     dt_softplus: Int8,
     has_state_batch_indices: Int8,
     # Tensors
-    state: TileTensor[kernel_dtype, state_LT, MutUntrackedOrigin],
-    x: TileTensor[kernel_dtype, x_LT, MutUntrackedOrigin],
-    dt: TileTensor[kernel_dtype, dt_LT, MutUntrackedOrigin],
-    A: TileTensor[kernel_dtype, A_LT, MutUntrackedOrigin],
-    B: TileTensor[kernel_dtype, B_LT, MutUntrackedOrigin],
-    C: TileTensor[kernel_dtype, C_LT, MutUntrackedOrigin],
-    D: TileTensor[kernel_dtype, D_LT, MutUntrackedOrigin],
-    z: TileTensor[kernel_dtype, z_LT, MutUntrackedOrigin],
-    output: TileTensor[kernel_dtype, output_LT, MutUntrackedOrigin],
-    dt_bias: TileTensor[kernel_dtype, dt_bias_LT, MutUntrackedOrigin],
+    state: TileTensor[
+        kernel_dtype, state_LT, MutUntrackedOrigin, Storage=Storage
+    ],
+    x: TileTensor[kernel_dtype, x_LT, MutUntrackedOrigin, Storage=Storage],
+    dt: TileTensor[kernel_dtype, dt_LT, MutUntrackedOrigin, Storage=Storage],
+    A: TileTensor[kernel_dtype, A_LT, MutUntrackedOrigin, Storage=Storage],
+    B: TileTensor[kernel_dtype, B_LT, MutUntrackedOrigin, Storage=Storage],
+    C: TileTensor[kernel_dtype, C_LT, MutUntrackedOrigin, Storage=Storage],
+    D: TileTensor[kernel_dtype, D_LT, MutUntrackedOrigin, Storage=Storage],
+    z: TileTensor[kernel_dtype, z_LT, MutUntrackedOrigin, Storage=Storage],
+    output: TileTensor[
+        kernel_dtype, output_LT, MutUntrackedOrigin, Storage=Storage
+    ],
+    dt_bias: TileTensor[
+        kernel_dtype, dt_bias_LT, MutUntrackedOrigin, Storage=Storage
+    ],
     state_batch_indices: TileTensor[
-        .int32, state_batch_indices_LT, MutUntrackedOrigin
+        .int32, state_batch_indices_LT, MutUntrackedOrigin, Storage=Storage
     ],
     state_strides: Strides4D,  # (batch, nheads, dim, dstate)
     x_strides: Strides3D,  # (batch, nheads, dim)
@@ -257,6 +264,7 @@ def varlen_selective_scan_fwd_gpu[
     query_start_loc_LT: TensorLayout,
     cache_indices_LT: TensorLayout,
     has_initial_state_LT: TensorLayout,
+    Storage: TensorStorage = PointerStorage[element_width=1],
 ](
     dim: Int32,
     ngroups: Int32,
@@ -264,32 +272,36 @@ def varlen_selective_scan_fwd_gpu[
     pad_slot_id: Int32,
     delta_softplus: Int8,
     # Tensors - varlen format: (dim, total_length) for u, delta, z, out
-    u: TileTensor[kernel_dtype, u_LT, MutUntrackedOrigin],
-    delta: TileTensor[kernel_dtype, delta_LT, MutUntrackedOrigin],
-    A: TileTensor[kernel_dtype, A_LT, MutUntrackedOrigin],
+    u: TileTensor[kernel_dtype, u_LT, MutUntrackedOrigin, Storage=Storage],
+    delta: TileTensor[
+        kernel_dtype, delta_LT, MutUntrackedOrigin, Storage=Storage
+    ],
+    A: TileTensor[kernel_dtype, A_LT, MutUntrackedOrigin, Storage=Storage],
     B: TileTensor[
-        kernel_dtype, B_LT, MutUntrackedOrigin
+        kernel_dtype, B_LT, MutUntrackedOrigin, Storage=Storage
     ],  # (ngroups, dstate, total_length)
     C: TileTensor[
-        kernel_dtype, C_LT, MutUntrackedOrigin
+        kernel_dtype, C_LT, MutUntrackedOrigin, Storage=Storage
     ],  # (ngroups, dstate, total_length)
-    D: TileTensor[kernel_dtype, D_LT, MutUntrackedOrigin],
-    z: TileTensor[kernel_dtype, z_LT, MutUntrackedOrigin],
-    delta_bias: TileTensor[kernel_dtype, delta_bias_LT, MutUntrackedOrigin],
+    D: TileTensor[kernel_dtype, D_LT, MutUntrackedOrigin, Storage=Storage],
+    z: TileTensor[kernel_dtype, z_LT, MutUntrackedOrigin, Storage=Storage],
+    delta_bias: TileTensor[
+        kernel_dtype, delta_bias_LT, MutUntrackedOrigin, Storage=Storage
+    ],
     ssm_states: TileTensor[
-        kernel_dtype, ssm_states_LT, MutUntrackedOrigin
+        kernel_dtype, ssm_states_LT, MutUntrackedOrigin, Storage=Storage
     ],  # (batch, dim, dstate)
     output: TileTensor[
-        kernel_dtype, output_LT, MutUntrackedOrigin
+        kernel_dtype, output_LT, MutUntrackedOrigin, Storage=Storage
     ],  # Output written here (or to z if z is present)
     query_start_loc: TileTensor[
-        .int32, query_start_loc_LT, MutUntrackedOrigin
+        .int32, query_start_loc_LT, MutUntrackedOrigin, Storage=Storage
     ],  # (batch + 1,)
     cache_indices: TileTensor[
-        .int32, cache_indices_LT, MutUntrackedOrigin
+        .int32, cache_indices_LT, MutUntrackedOrigin, Storage=Storage
     ],  # (batch,)
     has_initial_state: TileTensor[
-        .bool, has_initial_state_LT, MutUntrackedOrigin
+        .bool, has_initial_state_LT, MutUntrackedOrigin, Storage=Storage
     ],  # (batch,)
     u_strides: Strides2D,  # (dim, total_length)
     delta_strides: Strides2D,  # (dim, total_length)
@@ -521,8 +533,7 @@ def varlen_selective_state_update_cpu[
     var dt_softplus_bool = Bool(Int(dt_softplus) != 0)
     var has_state_batch_indices_bool = Bool(Int(has_state_batch_indices) != 0)
 
-    @__parameter
-    def worker(idx: Int):
+    def worker(idx: Int) {imm}:
         var b, remaining = divmod(idx, nheads * dim)
         var h, m = divmod(remaining, dim)
 
@@ -648,7 +659,7 @@ def varlen_selective_state_update_cpu[
             out_offset, Scalar[kernel_dtype](out_val.cast[kernel_dtype]())
         )
 
-    sync_parallelize[worker](batch * nheads * dim, ctx)
+    sync_parallelize(worker, batch * nheads * dim, ctx)
 
 
 def varlen_selective_scan_fwd_cpu[
@@ -696,8 +707,7 @@ def varlen_selective_scan_fwd_cpu[
     var delta_softplus_bool = Bool(Int(delta_softplus) != 0)
     var group_size = dim // ngroups
 
-    @__parameter
-    def worker(d: Int):
+    def worker(d: Int) {imm}:
         # Pre-load D and delta_bias for this dim
         var D_val = Float32(0.0)
         if has_D:
@@ -851,4 +861,4 @@ def varlen_selective_scan_fwd_cpu[
                     Scalar[kernel_dtype](state[n].cast[kernel_dtype]()),
                 )
 
-    sync_parallelize[worker](dim, ctx)
+    sync_parallelize(worker, dim, ctx)

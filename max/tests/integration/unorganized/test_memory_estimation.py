@@ -143,7 +143,9 @@ def test_memory_estimation__infer_optimal_batch_size() -> None:
     assert inferred_batch_size == 1
 
 
-def _dummy_llama_config(max_length: int | None) -> DummyPipelineConfig:
+def _dummy_llama_config(
+    max_length: int | None, max_batch_total_tokens: int | None = None
+) -> DummyPipelineConfig:
     """A dummy config whose mocked HF config carries concrete KV-sizing ints."""
     config = DummyPipelineConfig(
         model_path="modularai/Llama-3.1-8B-Instruct-GGUF",
@@ -151,6 +153,7 @@ def _dummy_llama_config(max_length: int | None) -> DummyPipelineConfig:
         max_length=max_length,
         device_specs=[DeviceSpec.cpu()],
         quantization_encoding=DUMMY_LLAMA_ARCH.default_encoding,
+        max_batch_total_tokens=max_batch_total_tokens,
     )
     hf_config = config.model.huggingface_config
     hf_config.max_position_embeddings = 4096
@@ -164,10 +167,14 @@ def _set_kv_connector(
     cfg: DummyPipelineConfig, kv_connector: KVConnectorType
 ) -> None:
     kv = cfg.model.kv_cache
-    cfg.model.kv_cache = kv.model_copy(
+    cfg.models["main"] = cfg.model.model_copy(
         update={
-            "kv_connector_config": kv.kv_connector_config.model_copy(
-                update={"type": kv_connector}
+            "kv_cache": kv.model_copy(
+                update={
+                    "kv_connector_config": kv.kv_connector_config.model_copy(
+                        update={"type": kv_connector}
+                    )
+                }
             )
         }
     )
@@ -234,8 +241,9 @@ def test_for_pipeline__defaults_max_batch_total_tokens_when_arch_requires() -> (
             == 512
         )
         # The plan carries a user-set cap unchanged instead.
-        config = _dummy_llama_config(max_length=512)
-        config.runtime.max_batch_total_tokens = 2048
+        config = _dummy_llama_config(
+            max_length=512, max_batch_total_tokens=2048
+        )
         plan = MemoryEstimator.plan(config, arch)
         assert plan.planned_max_batch_total_tokens == 2048
 
@@ -275,7 +283,9 @@ def _overcommitted_llama_config(
     reach the shrink-to-fit branch of ``plan_from_sizes``.
     """
     config = _dummy_llama_config(max_length=max_length)
-    config.model.kv_cache = KVCacheConfig(device_memory_utilization=1.5)
+    config.models["main"] = config.model.model_copy(
+        update={"kv_cache": KVCacheConfig(device_memory_utilization=1.5)}
+    )
     return config
 
 
@@ -291,7 +301,7 @@ def test_shrink_to_fit__runs_for_resolved_default_max_length(
     # Mirror PipelineConfig._resolve_max_length: intent was captured at
     # construction (None -> not user provided); the policy value is then
     # stored on the config.
-    config.model.max_length = 4096
+    config.models["main"] = config.model.model_copy(update={"max_length": 4096})
 
     with patch(
         "max.driver.Device.stats", new_callable=PropertyMock
@@ -568,7 +578,7 @@ def test_memory_estimation__raise_oom_error_max_batch_size_set_and_max_length_se
             1,
         ),
         # KV connectors fan MLA-replicated blocks out via plain P2P copies
-        # (see dkv/kv-tier-connector/src/copy_engine.rs), not a signal-buffer
+        # (see rust_kv/kv-tier-connector/src/copy_engine.rs), not a signal-buffer
         # broadcast, so none of them add an extra set.
         (
             [DeviceSpec.accelerator(id=i) for i in range(2)],

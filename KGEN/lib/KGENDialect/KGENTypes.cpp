@@ -44,8 +44,8 @@ constexpr llvm::StringLiteral kStructElemLayoutError =
 /// Return a string like "imm" or "mut".
 const char *KGEN::getUserSyntax(ArgConvention convention) {
   switch (convention) {
-  case ArgConvention::ReadReg:
-  case ArgConvention::ReadMem:
+  case ArgConvention::ImmReg:
+  case ArgConvention::ImmMem:
     return "imm";
   case ArgConvention::OwnedReg:
   case ArgConvention::OwnedMem:
@@ -322,6 +322,11 @@ ErrorOr<TypedAttr> TypeType::readFrom(int64_t addr,
 
 GeneratorType GeneratorType::getWithBody(Type newBody) {
   return GeneratorType::get(getInputParamTypes(), newBody, getParamListAttrs());
+}
+
+GeneratorType
+GeneratorType::getWithInputParamTypes(ArrayRef<Type> inputParamTypes) {
+  return GeneratorType::get(inputParamTypes, getBody(), getParamListAttrs());
 }
 
 StringAttr GeneratorType::getParamName(size_t idx) {
@@ -701,10 +706,15 @@ bool FuncType::isKwVarArg(size_t index) {
 bool FuncType::isPack(size_t index) { return getArgListAttrs().isPack(index); }
 
 std::optional<size_t> FuncType::findPackVarArgIndex() {
-  size_t numUserArgs = getNumArguments() - hasMemoryOnlyResult();
+  size_t numUserArgs = getNumArguments() - hasMemoryOnlyResult() - isThrows();
   if (numUserArgs == 0)
     return std::nullopt;
   size_t lastUserArgIndex = numUserArgs - 1;
+  if (isKwVarArg(lastUserArgIndex)) {
+    if (lastUserArgIndex == 0)
+      return std::nullopt;
+    --lastUserArgIndex;
+  }
   if (isPack(lastUserArgIndex))
     return std::make_optional(lastUserArgIndex);
   return std::nullopt;

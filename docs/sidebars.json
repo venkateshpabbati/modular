@@ -53,7 +53,8 @@
         "serve/prefix-caching",
         "serve/lora-adapters",
         "serve/speculative-decoding",
-        "serve/recipes"
+        "serve/recipes",
+        "serve/metrics"
       ]
     },
     {
@@ -242,7 +243,17 @@
             "id": "api/python/experimental"
           },
           "items": [
-            "api/python/experimental.compilation",
+            {
+              "type": "category",
+              "label": "compilation",
+              "link": {
+                "type": "doc",
+                "id": "api/python/experimental.compilation"
+              },
+              "items": [
+                "__AUTOGEN:max.experimental.compilation__"
+              ]
+            },
             "api/python/experimental.functional",
             {
               "type": "category",
@@ -499,6 +510,17 @@
                 "id": "api/python/pipelines.diffusion"
               },
               "items": [
+                {
+                  "type": "category",
+                  "label": "config",
+                  "link": {
+                    "type": "doc",
+                    "id": "api/python/pipelines.diffusion.config"
+                  },
+                  "items": [
+                    "__AUTOGEN:max.pipelines.diffusion.config__"
+                  ]
+                },
                 {
                   "type": "category",
                   "label": "schedulers",

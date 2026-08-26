@@ -492,22 +492,23 @@ def test_combine[
         var dev_id = Int(ctx.id())
         run_combine_async(dev_id, cache_iter)
 
-    def per_gpu_combine(i: Int) raises capturing:
+    def per_gpu_combine(i: Int) raises {mut results_b, imm}:
         @always_inline
-        def bench_iter(mut b: Bencher) raises capturing:
+        def bench_iter(mut b: Bencher) raises {imm}:
             bencher_iter_custom(b, call_fn_combine, list_of_ctx[i])
 
         var bench_config = BenchConfig()
         bench_config.show_progress = False
         var b = Bench(bench_config^)
-        b.bench_function[bench_iter](
+        b.bench_function(
+            bench_iter,
             BenchId("bench combine"),
             [ThroughputMeasure(BenchMetric.bytes, 0)],
             fixed_iterations=n_slots,
         )
         results_b[i] = b.info_vec[0].copy()
 
-    sync_parallelize[per_gpu_combine](n_ranks)
+    sync_parallelize(per_gpu_combine, n_ranks)
 
     var max_time = 0.0
     var max_loc = 0
@@ -531,22 +532,23 @@ def test_combine[
         var dev_id = Int(ctx.id())
         run_combine_async_wait(dev_id, cache_iter)
 
-    def per_gpu_combine_wait(i: Int) raises capturing:
+    def per_gpu_combine_wait(i: Int) raises {mut results_b, imm}:
         @always_inline
-        def bench_iter(mut b: Bencher) raises capturing:
+        def bench_iter(mut b: Bencher) raises {imm}:
             bencher_iter_custom(b, call_fn_combine_wait, list_of_ctx[i])
 
         var bench_config = BenchConfig()
         bench_config.show_progress = False
         var b = Bench(bench_config^)
-        b.bench_function[bench_iter](
+        b.bench_function(
+            bench_iter,
             BenchId("bench combine_wait"),
             [ThroughputMeasure(BenchMetric.bytes, 0)],
             fixed_iterations=n_slots,
         )
         results_b[i] = b.info_vec[0].copy()
 
-    sync_parallelize[per_gpu_combine_wait](n_ranks)
+    sync_parallelize(per_gpu_combine_wait, n_ranks)
 
     max_time = 0.0
     max_loc = 0
@@ -564,9 +566,8 @@ def test_combine[
     # Verify the results for each device and each slot
     print("Verifying results...")
 
-    @__parameter
     @always_inline
-    def verify_results(dev_idx: Int) raises:
+    def verify_results(dev_idx: Int) raises {imm}:
         var ctx = list_of_ctx[dev_idx]
 
         # Allocate host buffers for copying device outputs
@@ -619,7 +620,7 @@ def test_combine[
         # Free host buffers
         host_output_2.free()
 
-    sync_parallelize[verify_results](n_ranks)
+    sync_parallelize(verify_results, n_ranks)
     print("All results verified successfully!")
 
     for dev_idx in range(n_ranks):

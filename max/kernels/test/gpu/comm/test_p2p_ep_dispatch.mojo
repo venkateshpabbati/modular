@@ -1127,22 +1127,23 @@ def test_dispatch_common[
         var dev_id = Int(ctx.id())
         run_dispatch_async(dev_id, cache_iter)
 
-    def per_gpu_dispatch(i: Int) raises capturing:
+    def per_gpu_dispatch(i: Int) raises {mut results_b, imm}:
         @always_inline
-        def bench_iter(mut b: Bencher) raises capturing:
+        def bench_iter(mut b: Bencher) raises {imm}:
             bencher_iter_custom(b, call_fn_dispatch, list_of_ctx[i])
 
         var bench_config = BenchConfig()
         bench_config.show_progress = False
         var b = Bench(bench_config^)
-        b.bench_function[bench_iter](
+        b.bench_function(
+            bench_iter,
             BenchId("bench dispatch"),
             [ThroughputMeasure(BenchMetric.bytes, 0)],
             fixed_iterations=n_slots,
         )
         results_b[i] = b.info_vec[0].copy()
 
-    sync_parallelize[per_gpu_dispatch](n_ranks)
+    sync_parallelize(per_gpu_dispatch, n_ranks)
 
     var max_time = 0.0
     var max_loc = 0
@@ -1166,22 +1167,23 @@ def test_dispatch_common[
         var dev_id = Int(ctx.id())
         run_dispatch_async_wait(dev_id, cache_iter)
 
-    def per_gpu_dispatch_wait(i: Int) raises capturing:
+    def per_gpu_dispatch_wait(i: Int) raises {mut results_b, imm}:
         @always_inline
-        def bench_iter(mut b: Bencher) raises capturing:
+        def bench_iter(mut b: Bencher) raises {imm}:
             bencher_iter_custom(b, call_fn_dispatch_wait, list_of_ctx[i])
 
         var bench_config = BenchConfig()
         bench_config.show_progress = False
         var b = Bench(bench_config^)
-        b.bench_function[bench_iter](
+        b.bench_function(
+            bench_iter,
             BenchId("bench dispatch_wait"),
             [ThroughputMeasure(BenchMetric.bytes, 0)],
             fixed_iterations=n_slots,
         )
         results_b[i] = b.info_vec[0].copy()
 
-    sync_parallelize[per_gpu_dispatch_wait](n_ranks)
+    sync_parallelize(per_gpu_dispatch_wait, n_ranks)
 
     max_time = 0.0
     max_loc = 0
@@ -1209,9 +1211,9 @@ def test_dispatch_common[
             run_dispatch_async(dev_id, cache_iter + 1)
             run_dispatch_async_wait(dev_id, cache_iter + 1)
 
-        def per_gpu_e2e(i: Int) raises capturing:
+        def per_gpu_e2e(i: Int) raises {mut results_b, imm}:
             @always_inline
-            def bench_iter(mut b: Bencher) raises capturing:
+            def bench_iter(mut b: Bencher) raises {imm}:
                 bencher_iter_custom(b, call_fn_e2e, list_of_ctx[i])
 
             run_e2e(i, 0)
@@ -1220,14 +1222,15 @@ def test_dispatch_common[
             var bench_config = BenchConfig()
             bench_config.show_progress = False
             var b = Bench(bench_config^)
-            b.bench_function[bench_iter](
+            b.bench_function(
+                bench_iter,
                 BenchId("bench dispatch e2e"),
                 [ThroughputMeasure(BenchMetric.bytes, num_bytes)],
                 fixed_iterations=n_slots - 1,
             )
             results_b[i] = b.info_vec[0].copy()
 
-        sync_parallelize[per_gpu_e2e](n_ranks)
+        sync_parallelize(per_gpu_e2e, n_ranks)
 
         max_time = 0.0
         max_loc = 0
@@ -1245,9 +1248,8 @@ def test_dispatch_common[
     # Verify the results for each device and each slot
     print("Verifying results...")
 
-    @__parameter
     @always_inline
-    def verify_results(dev_idx: Int) raises:
+    def verify_results(dev_idx: Int) raises {imm}:
         var ctx = list_of_ctx[dev_idx]
 
         # Allocate host buffers for copying device outputs
@@ -1394,7 +1396,7 @@ def test_dispatch_common[
         host_atomic_counter.free()
 
     dispatch_test.save_outputs_to_host(list_of_ctx)
-    sync_parallelize[verify_results](n_ranks)
+    sync_parallelize(verify_results, n_ranks)
     print("All results verified successfully!")
 
     for dev_idx in range(n_ranks):

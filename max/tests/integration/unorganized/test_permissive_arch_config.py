@@ -48,14 +48,16 @@ def _olmo2_pipeline_config(user_max_length: int | None) -> DummyPipelineConfig:
             "rope_theta": hf_config.rope_theta,
         }
     pipeline_config.model._huggingface_config = hf_config
-    pipeline_config.model.weight_path = [Path("model.safetensors")]
+    pipeline_config.models["main"] = pipeline_config.model.model_copy(
+        update={"weight_path": [Path("model.safetensors")]}
+    )
     return pipeline_config
 
 
 def _olmo2_max_seq_len(pipeline_config: DummyPipelineConfig) -> int:
     hf_config = pipeline_config.model.huggingface_config
     assert hf_config is not None
-    return Olmo2Config.calculate_max_seq_len(pipeline_config, hf_config)
+    return Olmo2Config.calculate_max_seq_len(hf_config, pipeline_config.model)
 
 
 @pytest.mark.parametrize("user_max_length", [None, 64])

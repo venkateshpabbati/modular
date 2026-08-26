@@ -43,6 +43,7 @@ if TYPE_CHECKING:
         TextAndVisionContext,
         TextContext,
     )
+    from max.pipelines.diffusion.config import TaylorSeerDefaults
     from max.pipelines.kv_cache.memory_planner import MemoryPlanner
     from max.pipelines.modeling.config_enums import SupportedEncoding
     from max.pipelines.modeling.types import (
@@ -230,12 +231,6 @@ class SupportedArchitecture:
     the max sequence length of the model.
     """
 
-    requires_kv_head_replication: bool = False
-    """If True, construction sets ``allow_kv_head_replication`` on the model's
-    KV-cache config. Needed when tensor parallelism is wider than the KV-head
-    count.
-    """
-
     tool_parser: str | Callable[[HuggingFaceRepo], str] | None = None
     """Optional default tool parser for this architecture.
 
@@ -305,6 +300,9 @@ class SupportedArchitecture:
 
     If None, the global default (compact JSON) is used.
     """
+
+    denoising_cache_defaults: TaylorSeerDefaults | None = None
+    """TaylorSeer tuning for this architecture. User-set fields always win."""
 
     supports_overlap_scheduler: bool = True
     """Whether this architecture supports auto-enabling the overlap scheduler.

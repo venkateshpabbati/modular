@@ -42,7 +42,6 @@ from typing_extensions import Self, override
 from ..deepseekV3_modulev3.model_config import DeepseekV3Config
 
 
-@dataclass(kw_only=True)
 class _KimiK2_5VisionCacheConfig:
     """Vision-cache facts shared by both registered Kimi K2.5 arch configs."""
 
@@ -233,14 +232,13 @@ class KimiK2_5TextConfig(
     @classmethod
     def calculate_max_seq_len(
         cls,
-        pipeline_config: PipelineConfig,
         huggingface_config: AutoConfig,
-        model_config: MAXModelConfig | None = None,
+        model_config: MAXModelConfig,
     ) -> int:
         # DeepseekV3Config does not inherit ArchConfigWithStoredKVParams, so the
         # VLM mixin cannot delegate max_seq_len to this class directly.
         return ArchConfigWithStoredKVParams.calculate_max_seq_len(
-            pipeline_config, huggingface_config, model_config
+            huggingface_config, model_config
         )
 
 

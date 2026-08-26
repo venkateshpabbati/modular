@@ -34,7 +34,7 @@ from max.gpu.primitives.grid_controls import (
 )
 from max.gpu.host import DeviceBuffer, DeviceContext
 from max.gpu.memory import external_memory
-from std.sys.info import has_apple_gpu_accelerator, is_apple_gpu
+from std.sys.info import has_apple_gpu_accelerator, is_amd_gpu, is_apple_gpu
 from layout import (
     ComptimeInt,
     Coord,
@@ -1351,10 +1351,52 @@ def _block_reduce_cutoff_stats[
 
 
 @always_inline
+def _block_reduce_topp_stats[
+    block_size: Int, broadcast: Bool = True
+](
+    mass0: Float32,
+    mass1: Float32,
+    min_gt_low: Float32,
+    max_le_high: Float32,
+) -> Tuple[Float32, Float32, Float32, Float32]:
+    """Reduces two masses and the cutoff bounds for a top-p-only search."""
+
+    @always_inline
+    @__parameter
+    def _reduce_fn[
+        dtype: DType, width: SIMDLength, reduction_idx: Int
+    ](v: SIMD[dtype, width]) -> Scalar[dtype]:
+        comptime if reduction_idx < 2:
+            return warp.sum(v)
+        elif reduction_idx == 2:
+            return warp.min(v)
+        else:
+            return warp.max(v)
+
+    var results = block._block_reduce[
+        block_size,
+        warp_reduce_fn=_reduce_fn,
+        broadcast=broadcast,
+    ](
+        StaticTuple[Float32, 4](
+            mass0,
+            mass1,
+            min_gt_low,
+            max_le_high,
+        ),
+        initial_vals=StaticTuple[Float32, 4](
+            0, 0, Float32.MAX_FINITE, Float32.MIN_FINITE
+        ),
+    )
+    return (results[0], results[1], results[2], results[3])
+
+
+@always_inline
 def _topk_topp_cutoff_search[
     vec_size: Int,
     block_size: Int,
     load_dist: def(Int) capturing[_] -> SIMD[.float32, vec_size],
+    track_count: Bool = True,
 ](
     d: Int,
     k: Int32,
@@ -1377,7 +1419,7 @@ def _topk_topp_cutoff_search[
     ``TopKMaskLogitsKernel``: bounds snap to actual data values via
     ``min_gt_low`` / ``max_le_high`` and the search ends when exactly one
     distinct value remains in ``(low, high]``, giving an exact cutoff with no
-    epsilon reasoning.
+    epsilon reasoning. Top-p-only callers disable count tracking.
 
     Callers must guarantee the bracket invariants at entry: the predicate
     fails at ``low_init`` (some constraint violated), holds at ``high_init``,
@@ -1396,8 +1438,20 @@ def _topk_topp_cutoff_search[
     var mass_above_low = mass_above_low_init
 
     for _ in range(_CUTOFF_SEARCH_MAX_ITERS):
-        var pivot_0 = (high + 2 * low) / 3
-        var pivot_1 = (2 * high + low) / 3
+        var pivot_0: Float32
+        var pivot_1: Float32
+        comptime if not track_count:
+            # A high top-p budget puts the cutoff near `low`; lower pivots
+            # shrink that side of the bracket without changing the predicate.
+            if 4 * p_eff > 3 * mass_above_low:
+                pivot_0 = (high + 3 * low) / 4
+                pivot_1 = (high + low) / 2
+            else:
+                pivot_0 = (high + 2 * low) / 3
+                pivot_1 = (2 * high + low) / 3
+        else:
+            pivot_0 = (high + 2 * low) / 3
+            pivot_1 = (2 * high + low) / 3
 
         # Accumulate thread-local counts/masses across all chunks.
         var thread_count_0: Int32 = 0
@@ -1416,10 +1470,12 @@ def _topk_topp_cutoff_search[
                 var idx = (i * block_size + tx) * vec_size + j
                 var valid = idx < d
                 if v[j] > pivot_0 and valid:
-                    thread_count_0 += 1
+                    comptime if track_count:
+                        thread_count_0 += 1
                     thread_mass_0 += v[j]
                 if v[j] > pivot_1 and valid:
-                    thread_count_1 += 1
+                    comptime if track_count:
+                        thread_count_1 += 1
                     thread_mass_1 += v[j]
                 if v[j] > low and valid:
                     min_gt_low = min(min_gt_low, v[j])
@@ -1427,32 +1483,59 @@ def _topk_topp_cutoff_search[
                     max_le_high = max(max_le_high, v[j])
 
         # Single fused block reduction after processing all chunks.
-        var stats = _block_reduce_cutoff_stats[block_size](
-            thread_count_0,
-            thread_count_1,
-            thread_mass_0,
-            thread_mass_1,
-            min_gt_low,
-            max_le_high,
-        )
-        var count_0 = stats[0]
-        var count_1 = stats[1]
-        var mass_0 = stats[2]
-        var mass_1 = stats[3]
-        min_gt_low = stats[4]
-        max_le_high = stats[5]
+        var count_0 = Int32(0)
+        var count_1 = Int32(0)
+        var mass_0: Float32
+        var mass_1: Float32
+        comptime if track_count:
+            var stats = _block_reduce_cutoff_stats[block_size](
+                thread_count_0,
+                thread_count_1,
+                thread_mass_0,
+                thread_mass_1,
+                min_gt_low,
+                max_le_high,
+            )
+            count_0 = stats[0]
+            count_1 = stats[1]
+            mass_0 = stats[2]
+            mass_1 = stats[3]
+            min_gt_low = stats[4]
+            max_le_high = stats[5]
+        else:
+            var stats = _block_reduce_topp_stats[block_size](
+                thread_mass_0,
+                thread_mass_1,
+                min_gt_low,
+                max_le_high,
+            )
+            mass_0 = stats[0]
+            mass_1 = stats[1]
+            min_gt_low = stats[2]
+            max_le_high = stats[3]
 
         # pivot_1 > pivot_0: if the constraint still fails above the higher
         # pivot it also fails above the lower one, so test high-to-low.
-        if count_1 >= k or mass_1 > p_eff:
-            low = pivot_1
-            mass_above_low = mass_1
-        elif count_0 >= k or mass_0 > p_eff:
-            low = pivot_0
-            mass_above_low = mass_0
-            high = min(pivot_1, max_le_high)
+        comptime if track_count:
+            if count_1 >= k or mass_1 > p_eff:
+                low = pivot_1
+                mass_above_low = mass_1
+            elif count_0 >= k or mass_0 > p_eff:
+                low = pivot_0
+                mass_above_low = mass_0
+                high = min(pivot_1, max_le_high)
+            else:
+                high = min(pivot_0, max_le_high)
         else:
-            high = min(pivot_0, max_le_high)
+            if mass_1 > p_eff:
+                low = pivot_1
+                mass_above_low = mass_1
+            elif mass_0 > p_eff:
+                low = pivot_0
+                mass_above_low = mass_0
+                high = min(pivot_1, max_le_high)
+            else:
+                high = min(pivot_0, max_le_high)
 
         # Exactly one distinct data value remains in (low, high]: every token
         # above `low` passes the predicate, every token at or below fails.
@@ -1574,6 +1657,11 @@ def TopKTopPSamplingFromProbKernel[
     comptime assert (
         not emit_dist or not is_apple_gpu()
     ), "out_dist is not supported on Apple GPUs"
+    # AMD benefits from replacing repeated exponentiation with an FP32
+    # workspace; the final pass overwrites the cached weights in place.
+    comptime cache_dist = (
+        is_amd_gpu() and from_logits and emit_dist and dist_dtype == .float32
+    )
 
     var _top_k_val = Int(top_k_val)
     var _d = Int(d)
@@ -1656,6 +1744,18 @@ def TopKTopPSamplingFromProbKernel[
                     (Idx[0], i * vec_size)
                 ).cast[.float32]()
                 var e = exp((v - row_max) * inv_temp)
+                comptime if cache_dist:
+                    # No barrier needed after the store: the strided readers
+                    # below re-read the slice this thread wrote. The lone
+                    # cross-thread read (`load_dist[1](sampled_id)`) is ordered
+                    # by the block reductions in between.
+                    var dist_row = TileTensor(
+                        out_dist.unsafe_value() + bx * _d,
+                        row_major(Idx[1], _d),
+                    )
+                    dist_row.store[width=vec_size](
+                        (Idx[0], i * vec_size), e.cast[dist_dtype]()
+                    )
                 thread_sum += e.reduce_add()
                 comptime if emit_dist:
                     if min_p_thresh > 0:
@@ -1681,12 +1781,21 @@ def TopKTopPSamplingFromProbKernel[
             # Load `width` elements of the sampling distribution at `offset`.
             # In from-logits mode this is the unnormalized softmax value with
             # the min-p mask applied inline.
-            var v = probs_row.load[width=width]((Idx[0], offset)).cast[
-                .float32
-            ]()
-
             comptime if from_logits:
-                var e = exp((v - row_max) * inv_temp)
+                var e: SIMD[.float32, width]
+                comptime if cache_dist:
+                    var dist_row = TileTensor(
+                        out_dist.unsafe_value() + bx * _d,
+                        row_major(Idx[1], _d),
+                    )
+                    e = dist_row.load[width=width]((Idx[0], offset)).cast[
+                        .float32
+                    ]()
+                else:
+                    var v = probs_row.load[width=width]((Idx[0], offset)).cast[
+                        .float32
+                    ]()
+                    e = exp((v - row_max) * inv_temp)
                 # Same predicate as apply_min_p_mask_kernel (`< threshold`
                 # zeroes; NaN compares false and is preserved).
                 if min_p_thresh > 0:
@@ -1695,7 +1804,9 @@ def TopKTopPSamplingFromProbKernel[
                             e[j] = 0
                 return e
             else:
-                return v
+                return probs_row.load[width=width]((Idx[0], offset)).cast[
+                    .float32
+                ]()
 
         # Top-p budget in the working domain (z == 1.0 in from-prob mode).
         var p_eff = p * z
@@ -1965,24 +2076,51 @@ def TopKTopPSamplingFromProbKernel[
                 var kept_mass = Float32(1)
 
                 if accepted_e >= 0:
+                    if k == _d and p >= 1.0 and not min_p:
+                        cutoff = 0
+                        kept_mass = z
+                    else:
 
-                    @__parameter
-                    @always_inline
-                    def load_dist_vec(
-                        offset: Int,
-                    ) -> SIMD[.float32, vec_size]:
-                        return load_dist[vec_size](offset)
+                        @__parameter
+                        @always_inline
+                        def load_dist_vec(
+                            offset: Int,
+                        ) -> SIMD[.float32, vec_size]:
+                            return load_dist[vec_size](offset)
 
-                    # The search needs `mass(> low)` over the masked working
-                    # distribution. A refined `q` came from `load_dist` sums
-                    # and is exactly that; the initial budget is the unmasked
-                    # `z`, which overstates it whenever min-p zeroed weight.
-                    var mass_above_low = q if low > 0 else masked_z
-                    var refined = _topk_topp_cutoff_search[
-                        vec_size, block_size, load_dist_vec
-                    ](_d, Int32(k), p_eff, low, accepted_e, mass_above_low)
-                    cutoff = refined[0]
-                    kept_mass = refined[1]
+                        # The search needs `mass(> low)` over the masked working
+                        # distribution. A refined `q` came from `load_dist` sums
+                        # and is exactly that; the initial budget is the unmasked
+                        # `z`, which overstates it whenever min-p zeroed weight.
+                        var mass_above_low = q if low > 0 else masked_z
+                        var refined: Tuple[Float32, Float32]
+                        if k == _d:
+                            refined = _topk_topp_cutoff_search[
+                                vec_size,
+                                block_size,
+                                load_dist_vec,
+                                track_count=False,
+                            ](
+                                _d,
+                                Int32(k),
+                                p_eff,
+                                low,
+                                accepted_e,
+                                mass_above_low,
+                            )
+                        else:
+                            refined = _topk_topp_cutoff_search[
+                                vec_size, block_size, load_dist_vec
+                            ](
+                                _d,
+                                Int32(k),
+                                p_eff,
+                                low,
+                                accepted_e,
+                                mass_above_low,
+                            )
+                        cutoff = refined[0]
+                        kept_mass = refined[1]
 
                 var dist_row = TileTensor(
                     out_dist.unsafe_value() + bx * _d,
@@ -2750,40 +2888,65 @@ def TopKTopPMaskedProbsKernel[
 
     @__parameter
     @always_inline
-    def load_e(offset: Int) -> SIMD[.float32, vec_size]:
+    def compute_e(offset: Int) -> SIMD[.float32, vec_size]:
         var v = logits_row.load[width=vec_size]((Idx[0], offset)).cast[
             .float32
         ]()
         return exp((v - m) * inv_temp)
 
-    # Total mass, plus how many tokens carry any: a row whose every
-    # positive token already satisfies the constraint has no boundary to
-    # find, and the search's precondition (the predicate fails at 0)
-    # would not hold.
+    var probs_row = TileTensor(probs_ptr + bx * _d, row_major(Idx[1], _d))
+
+    # Total mass, plus how many tokens carry any. At most k positive tokens
+    # need no top-k search: cutoff zero already keeps the full positive set.
     var thread_sum = Float32(0)
     var thread_pos: Int32 = 0
     for i in range(tx, _d // vec_size, block_size):
-        var e = load_e(i * vec_size)
+        var e = compute_e(i * vec_size)
+        # Repeated exponentiation costs more than the wider cache traffic on
+        # AMD; each thread reuses its own output slice until the final write.
+        comptime if is_amd_gpu():
+            probs_row.store[width=vec_size]((Idx[0], i * vec_size), e)
         thread_sum += e.reduce_add()
-        comptime for j in range(vec_size):
-            if e[j] > 0:
-                thread_pos += 1
-    var total = _block_reduce_value_count[.float32, broadcast=True](
-        ValueCount[.float32](thread_sum, thread_pos)
-    )
-    var z = total.value
+        if k < _d:
+            comptime for j in range(vec_size):
+                if e[j] > 0:
+                    thread_pos += 1
+
+    var z: Float32
+    var positive_count = Int32(0)
+    if k < _d:
+        var total = _block_reduce_value_count[.float32, broadcast=True](
+            ValueCount[.float32](thread_sum, thread_pos)
+        )
+        z = total.value
+        positive_count = total.count
+    else:
+        z = block.sum[block_size=block_size, broadcast=True](thread_sum)
     var p_eff = p * z
+
+    @__parameter
+    @always_inline
+    def load_e(offset: Int) -> SIMD[.float32, vec_size]:
+        comptime if is_amd_gpu():
+            return probs_row.load[width=vec_size]((Idx[0], offset))
+        else:
+            return compute_e(offset)
 
     var cut = Float32(0)
     var mass_s = z
-    if total.count >= Int32(k) or z > p_eff:
-        var refined = _topk_topp_cutoff_search[vec_size, block_size, load_e](
-            _d, Int32(k), p_eff, 0.0, 1.0, z
-        )
+    if positive_count > Int32(k) or z > p_eff:
+        var refined: Tuple[Float32, Float32]
+        if k == _d:
+            refined = _topk_topp_cutoff_search[
+                vec_size, block_size, load_e, track_count=False
+            ](_d, Int32(k), p_eff, 0.0, 1.0, z)
+        else:
+            refined = _topk_topp_cutoff_search[vec_size, block_size, load_e](
+                _d, Int32(k), p_eff, 0.0, 1.0, z
+            )
         cut = refined[0]
         mass_s = refined[1]
 
-    var probs_row = TileTensor(probs_ptr + bx * _d, row_major(Idx[1], _d))
     for i in range(tx, _d // vec_size, block_size):
         var e = load_e(i * vec_size)
         var masked = (e.gt(cut)).select(e / mass_s, SIMD[.float32, vec_size](0))

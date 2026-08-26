@@ -467,7 +467,7 @@ void LIT::printFnType(AsmPrinter &p, FuncType signature) {
     VariadicKind variadicness = argListAttr.getVariadicKind(i);
     if (variadicness == VariadicKind::PosVarArg ||
         variadicness == VariadicKind::PackVarArg) {
-      assert(argConv == ArgConvention::ReadMem ||
+      assert(argConv == ArgConvention::ImmMem ||
              argConv == ArgConvention::Mut ||
              argConv == ArgConvention::OwnedMem ||
              argConv == ArgConvention::OwnedReg);
@@ -916,6 +916,22 @@ Attribute IndexToDeclRefRemapper::tryReplace(Attribute attr, size_t depth) {
   }
 
   return nullptr;
+}
+
+//===----------------------------------------------------------------------===//
+// TraitSelfBinder
+//===----------------------------------------------------------------------===//
+
+Attribute TraitSelfBinder::tryReplace(Attribute attr, size_t depth) {
+  // Replace a reference to $(0,0) with the new selfValue.
+  auto paramRef = dyn_cast<ParamIndexRefAttr>(attr);
+  if (!paramRef || paramRef.getIndex() != 0 ||
+      // Check to see if this is a param ref referring to our Self or some
+      // other Self (perhaps in a signature parameter-value that declares its
+      // own self or something), see PSTIAIRAID.
+      paramRef.getDepth() + 1 != depth)
+    return {};
+  return selfValue;
 }
 
 //===----------------------------------------------------------------------===//

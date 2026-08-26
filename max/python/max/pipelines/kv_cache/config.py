@@ -128,12 +128,12 @@ class KVConnectorConfig(ConfigFileModel):
         default=None,
         description=(
             "Maximum host memory (GiB) for KV cache offloading, used by the "
-            "tiered connectors. When unset, sized to hold twice the device "
+            "tiered connectors. When unset, sized to hold 1.5 times the device "
             "page pool."
         ),
     )
     """Maximum host memory in GiB for KV cache offloading. ``None`` sizes it to
-    twice the device page pool."""
+    1.5 times the device page pool."""
 
     disk_offload_dir: str | None = Field(
         default=None,
@@ -148,11 +148,11 @@ class KVConnectorConfig(ConfigFileModel):
         default=None,
         description=(
             "Maximum disk space (GiB) for KV cache offloading. When unset, "
-            "sized to hold three times the device page pool."
+            "sized to hold twice the device page pool."
         ),
     )
     """Maximum disk space in GiB for KV cache offloading. ``None`` sizes it to
-    three times the device page pool."""
+    twice the device page pool."""
 
     num_disk_workers: int = Field(
         default=32,
@@ -241,17 +241,6 @@ class KVCacheConfig(ConfigFileModel):
     )
     """The fraction of available device memory the process should consume."""
 
-    allow_kv_head_replication: bool = Field(
-        default=False,
-        description=(
-            "Allow tensor parallelism wider than the KV-head count by "
-            "replicating each head across a group of devices. Architectures "
-            "that need this declare ``requires_kv_head_replication``; "
-            "construction sets the flag here."
-        ),
-    )
-    """Default for :meth:`to_params`'s ``allow_kv_head_replication`` argument."""
-
     kv_cache_format: str | None = Field(
         default=None,
         description=(
@@ -317,7 +306,7 @@ class KVCacheConfig(ConfigFileModel):
         kvcache_quant_config: KVCacheQuantizationConfig | None = None,
         speculative_method: SpeculativeMethod | None = None,
         num_draft_tokens: int = 0,
-        allow_kv_head_replication: bool | None = None,
+        allow_kv_head_replication: bool = False,
         page_size: int | None = None,
         window_size: int | None = None,
     ) -> KVCacheParams:
@@ -344,9 +333,10 @@ class KVCacheConfig(ConfigFileModel):
                 ``None`` when speculative decoding is disabled.
             num_draft_tokens: Total draft tokens generated per
                 speculative iteration. Zero when no speculative decoding.
-            allow_kv_head_replication: Replicate KV heads for TP wider than the
-                KV head count. Defaults to ``None`` (falls back to the config's
-                :attr:`allow_kv_head_replication`).
+            allow_kv_head_replication: Replicate KV heads for TP wider than
+                the KV head count. An architecture fact: implementations of
+                ``construct_kv_params`` pass it for the head layouts that
+                need it.
             page_size: Tokens per KV cache page. Defaults to ``None`` (falls
                 back to the config's :attr:`kv_cache_page_size`). Architectures
                 with a kernel-imposed minimum page size pass their effective
@@ -356,8 +346,6 @@ class KVCacheConfig(ConfigFileModel):
         Returns:
             The constructed KV cache parameters.
         """
-        if allow_kv_head_replication is None:
-            allow_kv_head_replication = self.allow_kv_head_replication
         kv_hash_seed = resolve_kv_hash_seed(
             self.kv_cache_hash_algo, self.kv_cache_hash_seed
         )
