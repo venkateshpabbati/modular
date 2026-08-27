@@ -302,6 +302,12 @@ This release completes the removal of APIs deprecated during the v1.0 cycle.
   `Int`/`UInt` values now shuffles the full 64-bit value instead of silently
   truncating it to 32 bits.
 
+- Removed the `Int` overloads of `rotate_bits_left()` and
+  `rotate_bits_right()` in `std.bit`. The `SIMD` overloads now accept any
+  integral element type instead of only unsigned ones — rotation is a pure
+  bit-pattern operation, so signed and unsigned rotate identically — and
+  therefore handle `Int` arguments directly. Call sites need no changes.
+
 - Removed the `std.gpu.profiler` module and its `ProfileBlock` context manager.
   It timed host wall-clock, not GPU work, and reported the elapsed time with the
   operands reversed. Time a block of host code with
@@ -401,6 +407,11 @@ This release completes the removal of APIs deprecated during the v1.0 cycle.
   `.mojoc` files instead.
 
 ## Fixed
+
+- `SIMD.__init__(py=...)` now reads unsigned dtypes through the unsigned CPython
+  entry point (`PyLong_AsSize_t`). Constructing an unsigned `SIMD` from a Python
+  int in `[2**63, 2**64)` no longer overflows, and a negative Python int now
+  raises instead of silently wrapping to the maximum value.
 
 - A `where` clause naming a type that an enclosing `where` clause constrained
   to a tighter trait can now be proven. Calling a method declared

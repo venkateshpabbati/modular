@@ -14,6 +14,15 @@ the [container](/container) page now links to the new page.
 
 ## MAX models
 
+- Added the `audio_generation` pipeline task, for models that render audio
+  rather than tokens or pixels. Its request options (lyrics, duration,
+  denoising steps, guidance scale, output format) arrive as the `audio`
+  provider options of an OpenResponses request, and an architecture on the
+  task serves over `/v1/audio/speech` and `/v1/responses`. Responses report
+  `usage` the way image generation does: token counts stay at 0 and a
+  `usage.audio_generation_details` block carries `duration_seconds`,
+  `sample_rate`, `channels`, `num_samples`, and `steps`, measured from the
+  audio actually produced rather than the duration that was asked for.
 - Fixed unbounded host-memory usage in Gemma 4 video pre-processing: the
   server now decodes only the sampled frames of a video instead of
   materializing every frame before sampling, bounding peak memory at the
@@ -587,6 +596,23 @@ the [container](/container) page now links to the new page.
   shape compiles. A conjunction that cannot be folded exactly still returns
   400 naming the keyword pair at fault, rather than compiling to a looser
   grammar.
+- A JSON schema using `oneOf` is now enforced when its branches can be
+  proven pairwise disjoint, instead of being refused outright. Disjoint
+  branches make the union exactly-one, which is what `oneOf` means. Branch
+  types and `const`/`enum` value sets carry the proof, covering nullable
+  values, scalar unions, enum partitions and unions discriminated by a
+  constant property. A union that cannot be proven disjoint still returns
+  400, as does a `const`/`enum` branch carrying a keyword the lowering
+  drops. The refusals apply when unsupported-schema rejection
+  (`reject_unsupported`) is enabled.
+- Fixed a union (`anyOf`/`oneOf`) folding its sibling keywords into each
+  branch too widely, which could accept values the schema forbids. These
+  shapes now return 400 instead, when
+  unsupported-schema rejection (`reject_unsupported`) is enabled: a closing
+  `additionalProperties`, `items` or `unevaluatedProperties` beside a union,
+  a base constraint beside `$ref`, `const` or `enum` — whether folded in
+  from a union or written in the same object — and `$ref` beside a
+  sibling union.
 
 - Hardened the server-side fetch of client-supplied `image_url` / `video_url`
   references against SSRF: the host is now validated and hosts that resolve to
@@ -594,6 +620,17 @@ the [container](/container) page now links to the new page.
   (`MAX_SERVE_MEDIA_URL_SSRF_PROTECTION_ENABLED`); a per-host allowlist
   (`MAX_SERVE_MEDIA_URL_ALLOWED_HOSTS`, hostnames or CIDRs) permits trusted
   internal hosts.
+
+- Compiling deeply nested JSON schemas is substantially faster and uses
+  less memory by avoiding repeated subtree copies while constructing cache
+  keys. Emitted grammars are unchanged.
+
+- Fixed strict JSON Schema compilation silently dropping string length
+  bounds when a pattern or format is present. Redundant bounds now compile,
+  while unsatisfiable or partially overlapping constraints return 400.
+  Equivalent direct, `allOf`, and union-folded schemas receive the same
+  result. Regex length analysis has a per-schema work limit, so oversized
+  patterns return 400 promptly.
 
 - Speculative decoding takes `--draft-proposal sampled` (default `argmax`,
   unchanged). The draft model samples its proposal under the request's
@@ -727,6 +764,11 @@ the [container](/container) page now links to the new page.
 ### C API
 
 ## MAX kernels
+
+- Added `MODULAR_APPLE_M5_ALLOW_LOSSY_F32_ATTENTION`. Set it to `0` to keep
+  fp32 attention off the Apple M5 MMA, which truncates operands to fp19. It
+  defaults to the fast (lossy) path, matching
+  `MODULAR_APPLE_M5_ALLOW_LOSSY_F32_MATMUL`.
 
 - The MLA sparse-attention indexer (DeepSeek V3.2, GLM 5.x) now does work
   proportional to each row's actual key count instead of the batch's
@@ -953,6 +995,19 @@ the [container](/container) page now links to the new page.
 - Fixed `DeviceExternalFunction` crashing on Metal instead of launching, so
   separately compiled kernels now load and launch there as they already did on
   other GPU backends.
+
+- Fixed device buffer allocation no longer being pooled on GPUs without
+  GPUDirect RDMA support, such as GeForce cards. A
+  `DeviceContext.enqueue_create_buffer()` create and destroy round trip on an
+  affected device took roughly 67 us instead of 375 ns.
+
+- Fixed abandoned image, video, and audio generation requests still being
+  rendered. The scheduler these tasks share never read its cancellation
+  queue, so a request whose client had disconnected was executed in full
+  once it reached the front of the queue, and the cancellations themselves
+  accumulated. A request cancelled before it starts is now dropped and
+  answered as cancelled; one already in flight still runs to completion,
+  since a render is a single uninterruptible call.
 
 - Fixed reductions over a zero-extent axis — for example `ops.sum(x, axis=1)`
   where that axis has length `0` — leaving their output unwritten, along with
