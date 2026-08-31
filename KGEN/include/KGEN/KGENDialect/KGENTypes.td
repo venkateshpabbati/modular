@@ -228,9 +228,6 @@ def KGEN_GeneratorType : KGENType<"Generator", "generator", [
     /// Get this GeneratorType with a new body.
     GeneratorType getWithBody(Type newBody);
 
-    /// Get this GeneratorType with a new input parameter types.
-    GeneratorType getWithInputParamTypes(ArrayRef<Type> newInputTypes);
-
     /// Get this GeneratorType with some parameters bound.
     GeneratorType getSpecializedGenerator(
       PartiallySpecializedInputParams &specialization,
@@ -310,13 +307,11 @@ def KGEN_FuncGeneratorTypeBuilderType : KGENType<"FuncGeneratorTypeBuilder",
     "TypedAttr":$paramDecls,
     "TypedAttr":$argTypes,
     "TypedAttr":$resultType,
-    "TypedAttr":$metadata,
-    "TypedAttr":$implicitOriginDecls
+    "TypedAttr":$metadata
   );
 
   let assemblyFormat = [{
-    `<` $paramDecls `,` $argTypes `,` $resultType `,` $metadata `,`
-      $implicitOriginDecls `>`
+    `<` $paramDecls `,` $argTypes `,` $resultType `,` $metadata  `>`
   }];
 
   let genVerifyDecl = 1;
@@ -330,16 +325,14 @@ def KGEN_FuncGeneratorTypeBuilderType : KGENType<"FuncGeneratorTypeBuilder",
     TypeBuilderWithInferredContext<(ins "TypedAttr":$paramDecls,
                                         "TypedAttr":$argTypes,
                                         "TypedAttr":$resultType,
-                                        "TypedAttr":$metadata,
-                                        "TypedAttr":$implicitOriginDecls), [{
+                                        "TypedAttr":$metadata), [{
       return get(paramDecls.getContext(), paramDecls, argTypes, resultType,
-                 metadata, implicitOriginDecls);
+                 metadata);
     }], "Type">,
 
     // Verbose form with MLIRContext, used by the generated parser.
     TypeBuilder<(ins "TypedAttr":$paramDecls, "TypedAttr":$argTypes,
-                     "TypedAttr":$resultType, "TypedAttr":$metadata,
-                     "TypedAttr":$implicitOriginDecls),
+                     "TypedAttr":$resultType, "TypedAttr":$metadata),
                 "", "Type">
   ];
 }

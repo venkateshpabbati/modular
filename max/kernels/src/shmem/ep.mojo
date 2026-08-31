@@ -136,19 +136,21 @@ def pack_ptrs_array[
         my_rank: Rank index of the calling device within the communicator.
     """
     comptime assert _ptrs.flat_rank == 1, "Pointers must be a 1D tensor."
-    var ptr_arr = Array[
-        UnsafePointer[Scalar[ptr_type], MutUntrackedOrigin], n_gpus_per_node
-    ](uninitialized=True)
 
-    comptime for i in range(n_gpus_per_node):
+    @always_inline
+    def ptr_arr_init(
+        i: Int,
+    ) {imm} -> UnsafePointer[Scalar[ptr_type], MutUntrackedOrigin]:
         comptime if local_rank_only:
-            ptr_arr[i] = UnsafePointer[Scalar[ptr_type], MutUntrackedOrigin](
+            return UnsafePointer[Scalar[ptr_type], MutUntrackedOrigin](
                 unsafe_from_address=Int(_ptrs[my_rank])
             )
         else:
-            ptr_arr[i] = UnsafePointer[Scalar[ptr_type], MutUntrackedOrigin](
+            return UnsafePointer[Scalar[ptr_type], MutUntrackedOrigin](
                 unsafe_from_address=Int(_ptrs[i])
             )
+
+    var ptr_arr = Array[_, n_gpus_per_node](fill_with=ptr_arr_init)
 
     return ptr_arr^
 
@@ -250,8 +252,7 @@ def ep_dispatch_async_kernel_api[
     ]
 
     @always_inline
-    @__parameter
-    def description_fn() -> String:
+    def description_fn() {imm} -> String:
         # fmt: off
         return String(
             "input_dtype=", input_tokens.dtype,
@@ -266,7 +267,7 @@ def ep_dispatch_async_kernel_api[
 
     with Trace[TraceLevel.OP, target=target](
         "ep.dispatch_async",
-        Trace[TraceLevel.OP]._get_detail_str[description_fn](),
+        Trace[TraceLevel.OP]._get_detail_str(description_fn),
         task_id=get_safe_task_id(context),
     ):
         var func = gpu_ctx.compile_function[dispatch_async]()
@@ -401,8 +402,7 @@ def ep_dispatch_wait_kernel_api[
     ]
 
     @always_inline
-    @__parameter
-    def description_fn() -> String:
+    def description_fn() {imm} -> String:
         # fmt: off
         return String(
             "token_fmt_type=", token_fmt_type.get_type_name(),
@@ -416,7 +416,7 @@ def ep_dispatch_wait_kernel_api[
 
     with Trace[TraceLevel.OP, target=target](
         "ep.dispatch_wait",
-        Trace[TraceLevel.OP]._get_detail_str[description_fn](),
+        Trace[TraceLevel.OP]._get_detail_str(description_fn),
         task_id=get_safe_task_id(context),
     ):
         var recv_buf_ptr = UnsafePointer[UInt8, MutUntrackedOrigin](
@@ -590,8 +590,7 @@ def ep_fused_dispatch_kernel_api[
     ]
 
     @always_inline
-    @__parameter
-    def description_fn() -> String:
+    def description_fn() {imm} -> String:
         # fmt: off
         return String(
             "token_fmt_type=", token_fmt_type.get_type_name(),
@@ -605,7 +604,7 @@ def ep_fused_dispatch_kernel_api[
 
     with Trace[TraceLevel.OP, target=target](
         "ep.dispatch",
-        Trace[TraceLevel.OP]._get_detail_str[description_fn](),
+        Trace[TraceLevel.OP]._get_detail_str(description_fn),
         task_id=get_safe_task_id(context),
     ):
         var smem_size = UInt32(token_fmt_type.dispatch_smem_size)
@@ -773,8 +772,7 @@ def ep_combine_async_kernel_api[
     ]
 
     @always_inline
-    @__parameter
-    def description_fn() -> String:
+    def description_fn() {imm} -> String:
         # fmt: off
         return String(
             "combine_dtype=", combine_dtype,
@@ -790,7 +788,7 @@ def ep_combine_async_kernel_api[
 
     with Trace[TraceLevel.OP, target=target](
         "ep.combine",
-        Trace[TraceLevel.OP]._get_detail_str[description_fn](),
+        Trace[TraceLevel.OP]._get_detail_str(description_fn),
         task_id=get_safe_task_id(context),
     ):
         var func = gpu_ctx.compile_function[combine_async]()
@@ -933,8 +931,7 @@ def ep_combine_wait_kernel_api[
     ]
 
     @always_inline
-    @__parameter
-    def description_fn() -> String:
+    def description_fn() {imm} -> String:
         # fmt: off
         return String(
             "combine_dtype=", combine_dtype,
@@ -950,7 +947,7 @@ def ep_combine_wait_kernel_api[
 
     with Trace[TraceLevel.OP, target=target](
         "ep.combine_wait",
-        Trace[TraceLevel.OP]._get_detail_str[description_fn](),
+        Trace[TraceLevel.OP]._get_detail_str(description_fn),
         task_id=get_safe_task_id(context),
     ):
         var recv_buf_ptr = UnsafePointer[UInt8, MutUntrackedOrigin](
@@ -1123,8 +1120,7 @@ def ep_fused_combine_kernel_api[
     ]
 
     @always_inline
-    @__parameter
-    def description_fn() -> String:
+    def description_fn() {imm} -> String:
         # fmt: off
         return String(
             "combine_dtype=", combine_dtype,
@@ -1140,7 +1136,7 @@ def ep_fused_combine_kernel_api[
 
     with Trace[TraceLevel.OP, target=target](
         "ep.combine",
-        Trace[TraceLevel.OP]._get_detail_str[description_fn](),
+        Trace[TraceLevel.OP]._get_detail_str(description_fn),
         task_id=get_safe_task_id(context),
     ):
         var func = gpu_ctx.compile_function[fused_combine]()

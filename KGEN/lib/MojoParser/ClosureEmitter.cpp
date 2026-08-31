@@ -198,7 +198,8 @@ static void addConformanceTable(
   Block &block = witnessTable.getBody().emplaceBlock();
   b.setInsertionPointToStart(&block);
   for (auto [name, newWitness] : witnesses)
-    WitnessOp::create(b, StringAttr::get(ctx, name), newWitness);
+    WitnessOp::create(b, StringAttr::get(ctx, name), /*sym_visibility=*/nullptr,
+                      newWitness);
 
   // Register the conformance with the ASTDecl so lookupInCurrentScope can find
   // it during constraint checking.
@@ -906,7 +907,8 @@ static void generateIsTrivialSpecialAlias(StringRef name, bool value,
                                             structDecl.getLoc(), &structDecl);
 
   b.setInsertionPointToEnd(&conformanceOp.getBody().front());
-  WitnessOp::create(b, StringAttr::get(ctx, name), valueAttr);
+  WitnessOp::create(b, StringAttr::get(ctx, name), /*sym_visibility=*/nullptr,
+                    valueAttr);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1142,10 +1144,12 @@ ClosureEmitter::createFnStructWrapper(ASTDecl &moduleDecl, ASTDecl &traitDecl,
     Block &block = witnessTable.getBody().emplaceBlock();
     b.setInsertionPointToStart(&block);
     SymbolConstantAttr symbolConstant = buildSymbol(impl, implParameters);
-    WitnessOp::create(b, fnOp.getSymNameAttr(), symbolConstant);
+    WitnessOp::create(b, fnOp.getSymNameAttr(), /*sym_visibility=*/nullptr,
+                      symbolConstant);
     if (parent.getClosureMethod() == ClosureMethod::CALL) {
       for (auto [aliasName, value] : aliases)
-        WitnessOp::create(b, aliasName, value.second);
+        WitnessOp::create(b, aliasName, /*sym_visibility=*/nullptr,
+                          value.second);
     }
 
     return witnessTable;
@@ -2764,7 +2768,8 @@ ClosureEmitter::Closure ClosureEmitter::liftClosure(
            "non-marker closure method missing an implementation");
 
     TypedAttr symbol = buildSymbol(it->second, structOp.getInputParams());
-    WitnessOp::create(builder, fnOp.getSymNameAttr(), symbol);
+    WitnessOp::create(builder, fnOp.getSymNameAttr(),
+                      /*sym_visibility=*/nullptr, symbol);
 
     // add the alias entries
     if (closureParent.getClosureMethod() == ClosureMethod::CALL) {
@@ -2781,7 +2786,7 @@ ClosureEmitter::Closure ClosureEmitter::liftClosure(
                traitAliases,
                ArrayRef(captureBindings).take_front(traitAliases.size())))
         WitnessOp::create(builder, alias.getParamDecl().getName(),
-                          witnessValue);
+                          /*sym_visibility=*/nullptr, witnessValue);
     }
   };
 
@@ -3138,8 +3143,12 @@ static FailureOr<ASTDecl *> findCapture(SharedState &shared, StringRef name,
     FailureOr<ASTDecl *> result = partialLookup(nameAttr, *current, loc);
     if (failed(result))
       return failure();
-    if (result.value())
+    if (result.value()) {
+      // Error already diagnosed.
+      if (result.value()->isErroneous())
+        return failure();
       return result.value();
+    }
     if (current == upperBound)
       break;
   } while ((current = current->getParentDecl()));
@@ -3203,14 +3212,26 @@ ASTDecl *ClosureEmitter::addCaptureValue(ASTDecl &closure, SMLoc location,
     }
   }
 
-  CValue valueInParent =
-      ASTDeclToCValue(result, *emitter.builder, funcOp->getLoc());
+  // Capture materialization is inserted into the enclosing function. Stamp
+  // those ops with that function's debug scope, using the inner closure's
+  // file/line only. Keeping the inner subprogram on the loc would lower as
+  // an inlined location and fail LLVM's dbg-value verifier.
+  emitter.builder->setInsertionPoint(closure.getIfOperation());
+  DebugInfo::DIBuilder::ScopeGuard diGuard;
+  Location captureLoc = funcOp.getLoc();
+  if (auto fileLoc = captureLoc->findInstanceOf<FileLineColLoc>())
+    captureLoc = fileLoc;
+  if (shared.diBuilder) {
+    diGuard = shared.diBuilder->pushScopeGuard(parentFn.getLocScope());
+    captureLoc = shared.diBuilder->createScopedLoc(captureLoc);
+  }
+
+  CValue valueInParent = ASTDeclToCValue(result, *emitter.builder, captureLoc);
   if (!valueInParent) {
     shared.emitError(location, "'")
         << name << "' does not name a capturable value";
     return nullptr;
   }
-  emitter.builder->setInsertionPoint(closure.getIfOperation());
 
   CaptureConvention convention;
   /// The captureValue is a map of the valueInParent. For example, the
@@ -3220,11 +3241,6 @@ ASTDecl *ClosureEmitter::addCaptureValue(ASTDecl &closure, SMLoc location,
   /// later, we have to create a temporary value to represent the change in
   /// the properties of the value in the body of the closure.
   CValue captureValue;
-  // Switch the DI Scope to the enclosing function before emitting the
-  // load so the debug information is accurate.
-  DebugInfo::DIBuilder::ScopeGuard diGuard;
-  if (shared.diBuilder)
-    diGuard = shared.diBuilder->pushScopeGuard(parentFn.getLocScope());
 
   auto captureByRef = [&](CValue value,
                           std::optional<bool> mutability) -> CValue {
@@ -3246,8 +3262,8 @@ ASTDecl *ClosureEmitter::addCaptureValue(ASTDecl &closure, SMLoc location,
 
       if (originType.isMutableKnown(true)) {
         // convert a mut ref to immut ref
-        auto refImmutOp = LIT::RefImmutOp::create(
-            *emitter.builder, parentFn.getLoc(), valueInParent.getMlirValue());
+        auto refImmutOp = LIT::RefImmutOp::create(*emitter.builder, captureLoc,
+                                                  valueInParent.getMlirValue());
         return MBValue(refImmutOp->getResult(0));
       }
     }
@@ -3319,11 +3335,8 @@ ASTDecl *ClosureEmitter::addCaptureValue(ASTDecl &closure, SMLoc location,
               sugarDynCast<RefType>(valueInParent.getType().mlirType)) {
         OriginType originType = refType.getOriginType();
         if (originType.isMutableKnown(false)) {
-          Location fusedLoc =
-              FusedLoc::get(funcOp.getLoc().getContext(), funcOp.getLoc(),
-                            parentFn.getSubprogramScope());
           auto refImmutOp = LIT::RefImmutOp::create(
-              *emitter.builder, fusedLoc, valueInParent.getMlirValue());
+              *emitter.builder, captureLoc, valueInParent.getMlirValue());
           captureValue = MBValue(refImmutOp->getResult(0));
         }
       }

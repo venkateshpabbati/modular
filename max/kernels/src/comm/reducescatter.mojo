@@ -308,12 +308,12 @@ def _reducescatter_kernel[
         )
 
         # Round-robin access pattern to balance NVLink traffic across GPUs.
-        var reordered = Array[
-            TileTensor[dtype, in_layout, ImmutAnyOrigin], num_buffers
-        ](uninitialized=True)
-
-        comptime for i in range(num_buffers):
-            reordered[i] = in_bufs[circular_add[num_buffers](_my_rank, i)]
+        comptime TileType = TileTensor[dtype, in_layout, ImmutAnyOrigin]
+        var reordered = Array[_, num_buffers](
+            fill_with=lambda (i: Int) -> TileType: in_bufs[
+                circular_add[num_buffers](_my_rank, i)
+            ]
+        )
 
         var u_start = config.rank_unit_start(_my_rank)
         var n_units = config.rank_units(_my_rank)
@@ -323,14 +323,13 @@ def _reducescatter_kernel[
             # Flat: construct sliced 1D tiles from input TileTensors (any rank).
             comptime FlatLayout = type_of(row_major(n_elements))
             comptime FlatTile = TileTensor[dtype, FlatLayout, ImmutAnyOrigin]
-            var flat_tiles = Array[FlatTile, num_buffers](uninitialized=True)
             var elem_start = u_start * config.unit_numel
-
-            comptime for i in range(num_buffers):
-                flat_tiles[i] = FlatTile(
+            var flat_tiles = Array[_, num_buffers](
+                fill_with=lambda (i: Int) -> FlatTile: FlatTile(
                     reordered[i]._storage + elem_start,
                     row_major(n_elements),
                 )
+            )
 
             _reduce_scatter_impl[
                 ngpus, output_lambda=output_lambda, use_multimem=use_multimem
@@ -348,34 +347,29 @@ def _reducescatter_kernel[
             comptime SlicedRevTile = TileTensor[
                 dtype, RevLayout, ImmutAnyOrigin
             ]
-            var sliced_tiles = Array[SlicedRevTile, num_buffers](
-                uninitialized=True
-            )
 
-            comptime if axis == 0:
-                # Scatter along rows.
-                var dim_1 = Int(reordered[0].dim[1]())
-                comptime for i in range(num_buffers):
+            def sliced_tiles_at(i: Int) {imm} -> SlicedRevTile:
+                comptime if axis == 0:
+                    # Scatter along rows.
                     var sliced = reordered[i].slice(
                         (u_start, u_start + n_units),
-                        (0, dim_1),
+                        (0, Int(reordered[0].dim[1]())),
                     )
-                    sliced_tiles[i] = SlicedRevTile(
+                    return SlicedRevTile(
                         sliced._storage, sliced.layout.reverse()
                     )
-            else:
-                # axis == 1: scatter along columns.
-                var dim_0 = Int(reordered[0].dim[0]())
-                var col_start = u_start * simd_width
-                var col_end = col_start + n_units * simd_width
-                comptime for i in range(num_buffers):
+                else:
+                    # axis == 1: scatter along columns.
+                    var col_start = u_start * simd_width
                     var sliced = reordered[i].slice(
-                        (0, dim_0),
-                        (col_start, col_end),
+                        (0, Int(reordered[0].dim[0]())),
+                        (col_start, col_start + n_units * simd_width),
                     )
-                    sliced_tiles[i] = SlicedRevTile(
+                    return SlicedRevTile(
                         sliced._storage, sliced.layout.reverse()
                     )
+
+            var sliced_tiles = Array[_, num_buffers](fill_with=sliced_tiles_at)
 
             _reduce_scatter_impl[
                 ngpus, output_lambda=output_lambda, use_multimem=use_multimem
@@ -454,12 +448,12 @@ def _reducescatter_p2p[
     # Erase origin to ImmutAnyOrigin for the kernel.
     # TODO(KERN-2526): is this necessary?
     comptime KernelInputType = TileTensor[dtype, in_layout, ImmutAnyOrigin]
-    var kernel_in_bufs = Array[KernelInputType, num_buffers](uninitialized=True)
-    comptime for i in range(num_buffers):
-        kernel_in_bufs[i] = KernelInputType(
+    var kernel_in_bufs = Array[_, num_buffers](
+        fill_with=lambda (i: Int) -> KernelInputType: KernelInputType(
             list_of_in_bufs[i]._storage.as_imm().as_unsafe_any_origin(),
             list_of_in_bufs[i].layout,
         )
+    )
 
     comptime kernel = _reducescatter_kernel[
         dtype,

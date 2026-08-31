@@ -53,6 +53,22 @@ struct Kernels:
         )
 
     @staticmethod
+    def scaled_vec_add(
+        output: Pointer[Float32, MutAnyOrigin],
+        in0: Pointer[Float32, ImmutAnyOrigin],
+        in1: Pointer[Float32, ImmutAnyOrigin],
+        length_dev: Int32,
+        scale: Float32,
+    ):
+        var length = Int(length_dev)
+        var tid = global_idx.x
+        if tid >= length:
+            return
+        output[unsafe_offset=tid] = (
+            in0[unsafe_offset=tid] + in1[unsafe_offset=tid]
+        ) * scale
+
+    @staticmethod
     def fill_constant(
         output: Pointer[Float32, MutAnyOrigin],
         val_dev: Int32,
@@ -123,10 +139,7 @@ def test_vec_add_kernel_node(ctx: DeviceContext) raises:
 
 
 def test_parameterized_kernel_node(ctx: DeviceContext) raises:
-    print(
-        "Test add_function compiling a kernel passed as a parameter (no"
-        " explicit compile_function step)."
-    )
+    print("Test add_function compiling a kernel without compile_function.")
     comptime length = 1024
     comptime block_dim = 256
 
@@ -139,7 +152,6 @@ def test_parameterized_kernel_node(ctx: DeviceContext) raises:
             in0_host[i] = Float32(i)
             in1_host[i] = Float32(length - i)
 
-    # Pass `vec_add` directly as a parameter; the builder compiles it.
     def build(mut builder: DeviceGraphBuilder) raises {imm}:
         _ = builder.add_function[Kernels.vec_add](
             out_dev,
@@ -158,11 +170,8 @@ def test_parameterized_kernel_node(ctx: DeviceContext) raises:
             assert_equal(out_host[i], Float32(length))
 
 
-def test_capturing_parameterized_kernel_node(ctx: DeviceContext) raises:
-    print(
-        "Test add_function compiling a capturing kernel passed as a parameter"
-        " with runtime arguments."
-    )
+def test_scaled_kernel_node(ctx: DeviceContext) raises:
+    print("Test add_function compiling a thin kernel with a scale argument.")
     comptime length = 1024
     comptime block_dim = 256
     var scale = Float32(3.0)
@@ -177,81 +186,18 @@ def test_capturing_parameterized_kernel_node(ctx: DeviceContext) raises:
             in1_host[i] = Float32(length - i)
 
     def build(mut builder: DeviceGraphBuilder) raises {imm}:
-        # Captures `scale` from the enclosing scope while also taking runtime
-        # arguments, exercising the capturing parameter-based overload.
-        @__parameter
-        @__copy_capture(scale)
-        def scaled_vec_add(
-            output: Pointer[Float32, MutAnyOrigin],
-            in0: Pointer[Float32, ImmutAnyOrigin],
-            in1: Pointer[Float32, ImmutAnyOrigin],
-            length_dev: Int32,
-        ):
-            var length = Int(length_dev)
-            var tid = global_idx.x
-            if tid >= length:
-                return
-            output[unsafe_offset=tid] = (
-                in0[unsafe_offset=tid] + in1[unsafe_offset=tid]
-            ) * scale
-
-        _ = builder.add_function[scaled_vec_add](
+        _ = builder.add_function[Kernels.scaled_vec_add](
             out_dev,
             in0_dev,
             in1_dev,
             Int32(length),
+            scale,
             grid_dim=ceildiv(length, block_dim),
             block_dim=block_dim,
         )
 
     var graph = DeviceGraph.create(ctx, build)
     graph.replay()
-
-    with out_dev.map_to_host() as out_host:
-        for i in range(length):
-            assert_equal(out_host[i], Float32(length) * scale)
-
-
-def test_closure_node(ctx: DeviceContext) raises:
-    print("Test using a closure as a device graph node.")
-    comptime length = 1024
-    comptime block_dim = 256
-    var scale = Float32(2.0)
-
-    var in0_dev = ctx.enqueue_create_buffer[.float32](length)
-    var in1_dev = ctx.enqueue_create_buffer[.float32](length)
-    var out_dev = ctx.enqueue_create_buffer[.float32](length)
-
-    with in0_dev.map_to_host() as in0_host, in1_dev.map_to_host() as in1_host:
-        for i in range(length):
-            in0_host[i] = Float32(i)
-            in1_host[i] = Float32(length - i)
-
-    var out_ptr = out_dev.unsafe_ptr()
-    var in0_ptr = in0_dev.unsafe_ptr()
-    var in1_ptr = in1_dev.unsafe_ptr()
-
-    # Closure captures device pointers and scale from enclosing scope.
-    def scaled_vec_add() {var scale, var out_ptr, var in0_ptr, var in1_ptr}:
-        var tid = global_idx.x
-        if tid >= length:
-            return
-        out_ptr[unsafe_offset=tid] = (
-            in0_ptr[unsafe_offset=tid] + in1_ptr[unsafe_offset=tid]
-        ) * scale
-
-    def build(mut builder: DeviceGraphBuilder) raises {imm}:
-        _ = builder.add_function(
-            scaled_vec_add,
-            grid_dim=ceildiv(length, block_dim),
-            block_dim=block_dim,
-        )
-
-    var graph = DeviceGraph.create(ctx, build)
-    graph.replay()
-
-    _ = in0_dev^
-    _ = in1_dev^
 
     with out_dev.map_to_host() as out_host:
         for i in range(length):
@@ -992,6 +938,131 @@ def test_add_in_place_input(ctx: DeviceContext) raises:
 
     for i in range(length):
         assert_equal(host_dst[i], UInt8(0x3C))
+
+
+@fieldwise_init
+struct _HostValueInput(DeviceGraphInput, ImplicitlyCopyable, Movable):
+    """A host-resident graph input whose contents are baked into the graph.
+
+    Models dispatch metadata (e.g. attention cache lengths): the build closure
+    reads the value on the host at record time, freezing it into the recorded
+    nodes, so the full contents join the cache key -- changed bytes must miss
+    and re-record rather than replay stale dispatch. `allocate_stable` copies
+    the caller's bytes into a graph-owned host allocation before returning,
+    since recorded ops read the stable location while the build runs.
+    """
+
+    var data: Pointer[Scalar[DType.uint8], MutUntrackedOrigin]
+    var size: Int
+
+    def write_graph_key(self, mut writer: Some[Writer]):
+        writer.write(t"HostValueInput({self.size}, ")
+        for i in range(self.size):
+            writer.write(Int(self.data[i]), ",")
+        writer.write(")")
+
+    def allocate_stable(self, mut builder: DeviceGraphBuilder) raises -> Self:
+        var stable = builder.create_input_buffer[DType.uint8](
+            self.size, is_host=True
+        )
+        # The graph retains the allocation (create_input_buffer registers it),
+        # so returning just the pointer keeps the address reserved.
+        var dst = stable.unsafe_ptr().unsafe_origin_cast[MutUntrackedOrigin]()
+        for i in range(self.size):
+            dst[i] = self.data[i]
+        return Self(dst, self.size)
+
+
+def test_add_host_input(ctx: DeviceContext) raises:
+    print("Test host inputs get a stable host twin whose value bakes in.")
+    comptime length = 64
+
+    var host_dst = ctx.enqueue_create_host_buffer[DType.uint8](length)
+    for i in range(length):
+        host_dst[i] = 0
+
+    var device_buf = ctx.enqueue_create_buffer[DType.uint8](length)
+
+    # The host "dispatch value" the recording bakes in.
+    var caller_buf = ctx.enqueue_create_host_buffer[DType.uint8](1)
+    caller_buf[0] = 0x2B
+    var caller_input = _HostValueInput(caller_buf.unsafe_ptr(), 1)
+
+    var cache = DeviceGraphCache()
+    var build_count = 0
+    var count = Pointer(to=build_count)
+
+    def build(mut builder: DeviceGraphBuilder) raises {imm}:
+        count[] += 1
+        var stable = builder.add_input(caller_input)
+        assert_equal(builder.num_inputs(), 1)
+
+        # The stable twin is graph-owned host memory, not the caller's.
+        assert_true(stable.data != caller_input.data)
+
+        # Enqueue-time host read: the value steers what gets recorded, the
+        # way dispatch metadata steers kernel selection and launch geometry.
+        var pattern = stable.data[0]
+        var memset = builder.add_memset(device_buf, pattern)
+        _ = builder.add_copy(host_dst, device_buf, dependencies=[memset])
+
+    var graph = DeviceGraph.create(
+        ctx, build, caller_input, cache=Pointer(to=cache)
+    )
+    assert_equal(build_count, 1)
+    graph.replay()
+    ctx.synchronize()
+    for i in range(length):
+        assert_equal(host_dst[i], UInt8(0x2B))
+
+    # Same bytes: cache hit, no rebuild.
+    var again = DeviceGraph.create(
+        ctx, build, caller_input, cache=Pointer(to=cache)
+    )
+    assert_equal(build_count, 1)
+    _ = again^
+
+    # Changed bytes: miss and re-record with the new baked value.
+    caller_buf[0] = 0x71
+    var rerecorded = DeviceGraph.create(
+        ctx, build, caller_input, cache=Pointer(to=cache)
+    )
+    assert_equal(build_count, 2)
+    rerecorded.replay()
+    ctx.synchronize()
+    for i in range(length):
+        assert_equal(host_dst[i], UInt8(0x71))
+
+
+def test_host_input_key_bakes_contents(ctx: DeviceContext) raises:
+    print("Test host-input cache keys separate by contents.")
+
+    def build(mut builder: DeviceGraphBuilder) raises {imm}:
+        return
+
+    var a = ctx.enqueue_create_host_buffer[DType.uint8](2)
+    a[0] = 1
+    a[1] = 2
+    var b = ctx.enqueue_create_host_buffer[DType.uint8](2)
+    b[0] = 1
+    b[1] = 3
+
+    var key_a = DeviceGraphCache.make_key(
+        build, _HostValueInput(a.unsafe_ptr(), 2)
+    )
+    var key_b = DeviceGraphCache.make_key(
+        build, _HostValueInput(b.unsafe_ptr(), 2)
+    )
+    assert_not_equal(key_a, key_b)
+
+    # Same contents at a different address must agree: the key is the value.
+    var a2 = ctx.enqueue_create_host_buffer[DType.uint8](2)
+    a2[0] = 1
+    a2[1] = 2
+    assert_equal(
+        key_a,
+        DeviceGraphCache.make_key(build, _HostValueInput(a2.unsafe_ptr(), 2)),
+    )
 
 
 def test_cache_key_separates_inputs() raises:
